@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      1.5.0
-// @description  NodeSeek论坛增强：自动签到 + 进行中交易 + 抽奖帖 + 鸡腿排行榜
+// @version      1.6.0
+// @description  NodeSeek论坛增强：自动签到 + 进行中交易 + 抽奖帖 + 鸡腿排行榜(30分钟刷新)
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
 // @icon         https://www.nodeseek.com/favicon.ico
@@ -22,17 +22,17 @@
         API_URL: 'https://www.nodeseek.com/api/attendance',
         TRADE_URL: 'https://www.nodeseek.com/categories/trade',
         HOME_URL: 'https://www.nodeseek.com/',
-        RANK_URL: 'https://www.nodeseek.com/rank/credit',
         STORAGE_KEY: 'ns_last_checkin',
+        RANK_CACHE_KEY: 'ns_rank_cache',
         RANDOM_MODE: true,
         TRADE_COUNT: 5,
         LOTTERY_COUNT: 10,
-        RANK_COUNT: 20
+        RANK_COUNT: 10,
+        RANK_REFRESH_INTERVAL: 30 * 60 * 1000  // 30分钟刷新
     };
 
     // ==================== 样式注入 ====================
     GM_addStyle(`
-        /* 侧边栏容器 */
         .ns-sidebar {
             position: fixed;
             right: 10px;
@@ -49,7 +49,6 @@
         .ns-sidebar::-webkit-scrollbar { width: 4px; }
         .ns-sidebar::-webkit-scrollbar-thumb { background: #ccc; border-radius: 2px; }
 
-        /* 卡片样式 */
         .ns-card {
             background: #fff;
             border-radius: 8px;
@@ -70,12 +69,10 @@
         .ns-card-toggle { opacity: 0.7; font-size: 11px; }
         .ns-card.collapsed .ns-card-body { display: none; }
 
-        /* 卡片头部颜色 */
         .ns-card.trade .ns-card-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
         .ns-card.lottery .ns-card-header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #fff; }
         .ns-card.rank .ns-card-header { background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); color: #fff; }
 
-        /* 列表项 */
         .ns-item {
             padding: 6px 10px;
             border-bottom: 1px solid #f0f0f0;
@@ -94,7 +91,6 @@
         }
         .ns-item a:hover { color: #1890ff; }
 
-        /* 标签 */
         .ns-tag {
             flex-shrink: 0;
             padding: 1px 4px;
@@ -106,11 +102,7 @@
         .ns-tag.sell { background: #ff7875; }
         .ns-tag.buy { background: #40a9ff; }
         .ns-tag.active { background: #73d13d; }
-        .ns-tag.gold { background: #faad14; }
-        .ns-tag.silver { background: #8c8c8c; }
-        .ns-tag.bronze { background: #d48806; }
 
-        /* 标题文字 */
         .ns-title {
             flex: 1;
             overflow: hidden;
@@ -120,56 +112,65 @@
 
         /* 排行榜样式 */
         .ns-rank-item {
-            padding: 5px 10px;
+            padding: 6px 10px;
             border-bottom: 1px solid #f0f0f0;
             display: flex;
             align-items: center;
-            gap: 6px;
+            gap: 8px;
             font-size: 11px;
         }
         .ns-rank-item:last-child { border-bottom: none; }
         .ns-rank-item:hover { background: #f8f9fa; }
         .ns-rank-num {
-            width: 18px;
-            height: 18px;
+            width: 20px;
+            height: 20px;
             border-radius: 50%;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 10px;
-            font-weight: 600;
+            font-size: 11px;
+            font-weight: 700;
             color: #fff;
             flex-shrink: 0;
         }
-        .ns-rank-num.r1 { background: linear-gradient(135deg, #ffd700, #ffb700); }
-        .ns-rank-num.r2 { background: linear-gradient(135deg, #c0c0c0, #a0a0a0); }
-        .ns-rank-num.r3 { background: linear-gradient(135deg, #cd7f32, #b5651d); }
-        .ns-rank-num.rn { background: #e0e0e0; color: #666; }
+        .ns-rank-num.r1 { background: linear-gradient(135deg, #ffd700, #ff8c00); text-shadow: 0 1px 1px rgba(0,0,0,0.2); }
+        .ns-rank-num.r2 { background: linear-gradient(135deg, #e8e8e8, #b0b0b0); }
+        .ns-rank-num.r3 { background: linear-gradient(135deg, #cd7f32, #8b4513); }
+        .ns-rank-num.rn { background: #f0f0f0; color: #666; }
         .ns-rank-name {
             flex: 1;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-            color: #333;
         }
-        .ns-rank-name a { color: inherit; text-decoration: none; }
+        .ns-rank-name a { color: #333; text-decoration: none; font-weight: 500; }
         .ns-rank-name a:hover { color: #1890ff; }
-        .ns-rank-score { color: #faad14; font-weight: 500; font-size: 10px; }
+        .ns-rank-credit {
+            color: #fa8c16;
+            font-weight: 600;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .ns-rank-footer {
+            padding: 6px 10px;
+            text-align: center;
+            font-size: 10px;
+            color: #999;
+            border-top: 1px solid #f0f0f0;
+        }
 
-        /* 空状态 */
         .ns-empty { text-align: center; padding: 15px 10px; color: #999; font-size: 11px; }
         .ns-loading { color: #1890ff; }
 
-        /* 深色模式 */
         @media (prefers-color-scheme: dark) {
             .ns-card { background: #242424; box-shadow: 0 1px 6px rgba(0,0,0,0.3); }
-            .ns-item, .ns-rank-item { border-color: #333; }
+            .ns-item, .ns-rank-item, .ns-rank-footer { border-color: #333; }
             .ns-item:hover, .ns-rank-item:hover { background: #2d2d2d; }
-            .ns-item a, .ns-rank-name { color: #e0e0e0; }
-            .ns-empty { color: #666; }
+            .ns-item a, .ns-rank-name a { color: #e0e0e0; }
+            .ns-rank-num.rn { background: #333; color: #aaa; }
+            .ns-empty, .ns-rank-footer { color: #666; }
         }
 
-        /* 响应式 */
         @media (max-width: 1400px) { .ns-sidebar { display: none; } }
     `);
 
@@ -190,13 +191,15 @@
         if (!str) return '';
         return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     };
+    const formatNumber = (num) => {
+        if (num >= 10000) return (num / 10000).toFixed(1) + 'w';
+        if (num >= 1000) return (num / 1000).toFixed(1) + 'k';
+        return num.toString();
+    };
 
     // ==================== 签到功能 ====================
     const doCheckin = async () => {
-        if (hasCheckedIn()) {
-            console.log('[NS助手] 今日已签到');
-            return;
-        }
+        if (hasCheckedIn()) return;
         try {
             const res = await fetch(CONFIG.API_URL, {
                 method: 'POST',
@@ -217,8 +220,6 @@
     };
 
     // ==================== 数据获取 ====================
-
-    // 获取页面帖子
     const fetchPagePosts = async (url) => {
         try {
             const res = await fetch(url, { credentials: 'include' });
@@ -228,23 +229,15 @@
 
             const posts = [];
             const seen = new Set();
-            const links = doc.querySelectorAll('a[href*="/post-"]');
-
-            links.forEach(link => {
+            doc.querySelectorAll('a[href*="/post-"]').forEach(link => {
                 const href = link.getAttribute('href');
                 const postId = extractPostId(href);
                 const title = link.textContent?.trim();
                 if (!postId || !title || title.length < 3 || seen.has(postId)) return;
                 if (link.closest('.pagination, [class*="page"]')) return;
-
                 seen.add(postId);
-                posts.push({
-                    id: postId,
-                    title: title,
-                    url: href.startsWith('http') ? href : `https://www.nodeseek.com${href}`
-                });
+                posts.push({ id: postId, title, url: href.startsWith('http') ? href : `https://www.nodeseek.com${href}` });
             });
-
             return posts;
         } catch (e) {
             console.error('[NS助手] 获取页面失败:', e);
@@ -252,195 +245,164 @@
         }
     };
 
-    // 获取进行中的交易（排除已出/已收）
     const fetchActiveTrades = async () => {
         const posts = await fetchPagePosts(CONFIG.TRADE_URL);
         const results = [];
-
         for (const post of posts) {
             if (results.length >= CONFIG.TRADE_COUNT) break;
-            const title = post.title;
-
-            // 排除已完成的交易
-            const isCompleted = /已出|已收|已售|sold|closed/i.test(title);
-            if (isCompleted) continue;
-
-            // 判断是出售还是求购
-            const isSell = /出|sell|售/i.test(title);
-            const isBuy = /收|求|buy|购/i.test(title);
-
-            results.push({
-                title: title,
-                url: post.url,
-                type: isBuy ? 'buy' : 'sell',
-                tag: isBuy ? '求购' : '出售'
-            });
+            if (/已出|已收|已售|sold|closed/i.test(post.title)) continue;
+            const isBuy = /收|求|buy|购/i.test(post.title);
+            results.push({ title: post.title, url: post.url, type: isBuy ? 'buy' : 'sell', tag: isBuy ? '求购' : '出售' });
         }
-
-        console.log('[NS助手] 进行中交易:', results.length);
         return results;
     };
 
-    // 获取进行中的抽奖（排除已开奖，获取10个）
     const fetchActiveLotteries = async () => {
-        // 尝试多个页面获取更多抽奖帖
-        const urls = [
-            CONFIG.HOME_URL,
-            CONFIG.HOME_URL + '?page=2'
+        const allPosts = [];
+        for (const url of [CONFIG.HOME_URL, CONFIG.HOME_URL + '?page=2']) {
+            allPosts.push(...await fetchPagePosts(url));
+        }
+        const results = [], seen = new Set();
+        for (const post of allPosts) {
+            if (results.length >= CONFIG.LOTTERY_COUNT || seen.has(post.id)) continue;
+            if (!/抽奖|开奖|福利|免费送|白嫖|送\d+|🎁|🎉/i.test(post.title)) continue;
+            if (/已开奖|已结束|已完成|结束|开奖结果/i.test(post.title)) continue;
+            seen.add(post.id);
+            const cleanTitle = post.title.replace(/[\[【(（]?\s*(抽奖|开奖|福利)\s*[\]】)）]?/gi, '').replace(/^\s*[:：]\s*/, '').trim();
+            results.push({ title: cleanTitle || post.title, url: post.url, type: 'active', tag: '抽奖' });
+        }
+        return results;
+    };
+
+    // ==================== 鸡腿排行榜 ====================
+    const fetchCreditRank = async (forceRefresh = false) => {
+        // 检查缓存
+        const cached = GM_getValue(CONFIG.RANK_CACHE_KEY);
+        if (!forceRefresh && cached && Date.now() - cached.time < CONFIG.RANK_REFRESH_INTERVAL) {
+            console.log('[NS助手] 使用排行榜缓存');
+            return cached.data;
+        }
+
+        console.log('[NS助手] 获取全站鸡腿排行榜...');
+        const results = [];
+
+        // 尝试多个可能的排行榜URL
+        const rankUrls = [
+            'https://www.nodeseek.com/rank',
+            'https://www.nodeseek.com/rank/credit',
+            'https://www.nodeseek.com/ranks',
+            'https://www.nodeseek.com/leaderboard'
         ];
 
-        const allPosts = [];
-        for (const url of urls) {
-            const posts = await fetchPagePosts(url);
-            allPosts.push(...posts);
-        }
+        for (const url of rankUrls) {
+            try {
+                const res = await fetch(url, { credentials: 'include' });
+                if (!res.ok) continue;
 
-        const results = [];
-        const seen = new Set();
+                const html = await res.text();
+                const doc = new DOMParser().parseFromString(html, 'text/html');
 
-        for (const post of allPosts) {
-            if (results.length >= CONFIG.LOTTERY_COUNT) break;
-            if (seen.has(post.id)) continue;
+                // 尝试解析排行榜数据
+                const items = doc.querySelectorAll('tr, [class*="rank-item"], [class*="user-item"], [class*="leaderboard"]');
 
-            const title = post.title;
-            // 匹配抽奖关键词
-            const isLottery = /抽奖|开奖|福利|免费送|白嫖|送\d+|🎁|🎉/i.test(title);
-            if (!isLottery) continue;
+                items.forEach(item => {
+                    if (results.length >= CONFIG.RANK_COUNT) return;
 
-            // 排除已开奖
-            const isEnded = /已开奖|已结束|已完成|结束|开奖结果/i.test(title);
-            if (isEnded) continue;
+                    const userLink = item.querySelector('a[href*="/space/"]');
+                    if (!userLink) return;
 
-            seen.add(post.id);
-            let cleanTitle = title
-                .replace(/[\[【(（]?\s*(抽奖|开奖|福利)\s*[\]】)）]?/gi, '')
-                .replace(/^\s*[:：]\s*/, '')
-                .trim();
+                    const username = userLink.textContent?.trim();
+                    const userUrl = userLink.getAttribute('href');
+                    if (!username || username.length < 2) return;
 
-            results.push({
-                title: cleanTitle || title,
-                url: post.url,
-                type: 'active',
-                tag: '抽奖'
-            });
-        }
+                    // 查找鸡腿数
+                    let credit = 0;
+                    const allText = item.textContent;
 
-        console.log('[NS助手] 进行中抽奖:', results.length);
-        return results;
-    };
+                    // 尝试多种匹配方式
+                    const patterns = [
+                        /(\d{1,7})\s*鸡腿/,
+                        /鸡腿[：:\s]*(\d{1,7})/,
+                        /credit[：:\s]*(\d{1,7})/i,
+                        /积分[：:\s]*(\d{1,7})/,
+                        /(\d{3,7})(?=\s*$)/  // 行末的大数字
+                    ];
 
-    // 获取鸡腿排行榜
-    const fetchCreditRank = async () => {
-        try {
-            // 尝试从排行榜页面获取
-            const res = await fetch(CONFIG.RANK_URL, { credentials: 'include' });
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    for (const pattern of patterns) {
+                        const match = allText.match(pattern);
+                        if (match) {
+                            credit = parseInt(match[1]);
+                            break;
+                        }
+                    }
 
-            const html = await res.text();
-            const doc = new DOMParser().parseFromString(html, 'text/html');
+                    // 检查是否重复
+                    if (results.some(r => r.username === username)) return;
 
-            const results = [];
-
-            // 尝试多种选择器
-            const rows = doc.querySelectorAll('tr, [class*="rank"], [class*="item"], [class*="user"]');
-
-            rows.forEach(row => {
-                if (results.length >= CONFIG.RANK_COUNT) return;
-
-                // 查找用户链接
-                const userLink = row.querySelector('a[href*="/space/"]');
-                if (!userLink) return;
-
-                const username = userLink.textContent?.trim();
-                const userUrl = userLink.getAttribute('href');
-                if (!username) return;
-
-                // 查找鸡腿数 - 尝试多种方式
-                let credit = 0;
-                const texts = row.textContent;
-
-                // 尝试匹配数字
-                const creditMatch = texts.match(/(\d{1,6})\s*(鸡腿|积分|credit)?/i);
-                if (creditMatch) {
-                    credit = parseInt(creditMatch[1]);
-                }
-
-                // 也检查特定class
-                const creditEl = row.querySelector('[class*="credit"], [class*="score"], [class*="point"]');
-                if (creditEl) {
-                    const num = parseInt(creditEl.textContent.replace(/\D/g, ''));
-                    if (num > 0) credit = num;
-                }
-
-                if (credit > 0 || results.length < 3) {
                     results.push({
                         rank: results.length + 1,
-                        username: username,
-                        url: userUrl?.startsWith('http') ? userUrl : `https://www.nodeseek.com${userUrl}`,
-                        credit: credit
-                    });
-                }
-            });
-
-            // 如果排行榜页面没数据，尝试从首页提取活跃用户
-            if (results.length === 0) {
-                console.log('[NS助手] 排行榜页面无数据，尝试备用方案');
-                return await fetchTopUsersFromHome();
-            }
-
-            console.log('[NS助手] 鸡腿排行榜:', results.length);
-            return results;
-        } catch (e) {
-            console.error('[NS助手] 获取排行榜失败:', e);
-            return await fetchTopUsersFromHome();
-        }
-    };
-
-    // 备用：从活跃用户获取
-    const fetchTopUsersFromHome = async () => {
-        try {
-            const res = await fetch(CONFIG.HOME_URL, { credentials: 'include' });
-            const html = await res.text();
-            const doc = new DOMParser().parseFromString(html, 'text/html');
-
-            const users = new Map();
-            const userLinks = doc.querySelectorAll('a[href*="/space/"]');
-
-            userLinks.forEach(link => {
-                const username = link.textContent?.trim();
-                const href = link.getAttribute('href');
-                if (!username || username.length < 2 || username.length > 20) return;
-
-                if (!users.has(username)) {
-                    users.set(username, {
                         username,
-                        url: href?.startsWith('http') ? href : `https://www.nodeseek.com${href}`,
-                        count: 1
+                        url: userUrl?.startsWith('http') ? userUrl : `https://www.nodeseek.com${userUrl}`,
+                        credit
                     });
-                } else {
-                    users.get(username).count++;
+                });
+
+                if (results.length > 0) {
+                    console.log(`[NS助手] 从 ${url} 获取到 ${results.length} 条排行数据`);
+                    break;
                 }
-            });
-
-            // 按出现次数排序
-            const sorted = Array.from(users.values())
-                .sort((a, b) => b.count - a.count)
-                .slice(0, CONFIG.RANK_COUNT)
-                .map((u, i) => ({
-                    rank: i + 1,
-                    username: u.username,
-                    url: u.url,
-                    credit: 0  // 无法获取具体鸡腿数
-                }));
-
-            return sorted;
-        } catch (e) {
-            console.error('[NS助手] 备用方案失败:', e);
-            return [];
+            } catch (e) {
+                console.log(`[NS助手] ${url} 获取失败:`, e.message);
+            }
         }
+
+        // 如果没有获取到数据，尝试从API获取
+        if (results.length === 0) {
+            try {
+                const apiUrls = [
+                    'https://www.nodeseek.com/api/rank/credit',
+                    'https://www.nodeseek.com/api/users/top',
+                    'https://www.nodeseek.com/api/leaderboard'
+                ];
+
+                for (const apiUrl of apiUrls) {
+                    try {
+                        const res = await fetch(apiUrl, { credentials: 'include' });
+                        if (!res.ok) continue;
+
+                        const data = await res.json();
+                        if (data && Array.isArray(data.data || data.users || data.list || data)) {
+                            const list = data.data || data.users || data.list || data;
+                            list.slice(0, CONFIG.RANK_COUNT).forEach((item, i) => {
+                                results.push({
+                                    rank: i + 1,
+                                    username: item.username || item.name || item.user,
+                                    url: `https://www.nodeseek.com/space/${item.uid || item.id || item.userId}`,
+                                    credit: item.credit || item.score || item.points || 0
+                                });
+                            });
+                            if (results.length > 0) {
+                                console.log(`[NS助手] 从API获取到 ${results.length} 条排行数据`);
+                                break;
+                            }
+                        }
+                    } catch {}
+                }
+            } catch {}
+        }
+
+        // 缓存结果
+        if (results.length > 0) {
+            GM_setValue(CONFIG.RANK_CACHE_KEY, { data: results, time: Date.now() });
+        }
+
+        return results;
     };
 
     // ==================== 侧边栏UI ====================
+    let sidebarInstance = null;
+    let rankRefreshTimer = null;
+
     const createSidebar = () => {
         document.querySelector('.ns-sidebar')?.remove();
 
@@ -452,33 +414,26 @@
                     <span>💰 进行中交易</span>
                     <span class="ns-card-toggle">−</span>
                 </div>
-                <div class="ns-card-body">
-                    <div class="ns-empty ns-loading">加载中...</div>
-                </div>
+                <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
             </div>
             <div class="ns-card lottery">
                 <div class="ns-card-header">
                     <span>🎁 进行中抽奖</span>
                     <span class="ns-card-toggle">−</span>
                 </div>
-                <div class="ns-card-body">
-                    <div class="ns-empty ns-loading">加载中...</div>
-                </div>
+                <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
             </div>
             <div class="ns-card rank">
                 <div class="ns-card-header">
                     <span>🏆 鸡腿排行榜</span>
                     <span class="ns-card-toggle">−</span>
                 </div>
-                <div class="ns-card-body">
-                    <div class="ns-empty ns-loading">加载中...</div>
-                </div>
+                <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
             </div>
         `;
 
         document.body.appendChild(sidebar);
 
-        // 绑定折叠事件
         sidebar.querySelectorAll('.ns-card-header').forEach(header => {
             header.addEventListener('click', () => {
                 const card = header.closest('.ns-card');
@@ -488,6 +443,7 @@
             });
         });
 
+        sidebarInstance = sidebar;
         return sidebar;
     };
 
@@ -529,40 +485,50 @@
             body.innerHTML = '<div class="ns-empty">暂无排行数据</div>';
             return;
         }
+
+        const now = new Date();
+        const nextRefresh = new Date(now.getTime() + CONFIG.RANK_REFRESH_INTERVAL);
+        const refreshTime = `${nextRefresh.getHours().toString().padStart(2, '0')}:${nextRefresh.getMinutes().toString().padStart(2, '0')}`;
+
         body.innerHTML = items.map(item => {
             const rankClass = item.rank === 1 ? 'r1' : item.rank === 2 ? 'r2' : item.rank === 3 ? 'r3' : 'rn';
             return `
                 <div class="ns-rank-item">
                     <span class="ns-rank-num ${rankClass}">${item.rank}</span>
                     <span class="ns-rank-name">
-                        <a href="${escapeHtml(item.url)}" target="_blank">${escapeHtml(truncate(item.username, 12))}</a>
+                        <a href="${escapeHtml(item.url)}" target="_blank">${escapeHtml(truncate(item.username, 10))}</a>
                     </span>
-                    ${item.credit > 0 ? `<span class="ns-rank-score">🍗${item.credit}</span>` : ''}
+                    <span class="ns-rank-credit">🍗 ${item.credit > 0 ? formatNumber(item.credit) : '-'}</span>
                 </div>
             `;
-        }).join('');
+        }).join('') + `<div class="ns-rank-footer">每30分钟更新 · 下次 ${refreshTime}</div>`;
     };
 
     const loadSidebarData = async (sidebar) => {
-        const tradeCard = sidebar.querySelector('.ns-card.trade');
-        const lotteryCard = sidebar.querySelector('.ns-card.lottery');
-        const rankCard = sidebar.querySelector('.ns-card.rank');
-
-        // 并行加载
         const [trades, lotteries, ranks] = await Promise.all([
             fetchActiveTrades(),
             fetchActiveLotteries(),
             fetchCreditRank()
         ]);
 
-        renderTradeCard(tradeCard, trades);
-        renderLotteryCard(lotteryCard, lotteries);
+        renderTradeCard(sidebar.querySelector('.ns-card.trade'), trades);
+        renderLotteryCard(sidebar.querySelector('.ns-card.lottery'), lotteries);
+        renderRankCard(sidebar.querySelector('.ns-card.rank'), ranks);
+    };
+
+    const refreshRankData = async () => {
+        if (!sidebarInstance) return;
+        const rankCard = sidebarInstance.querySelector('.ns-card.rank');
+        if (!rankCard) return;
+
+        console.log('[NS助手] 刷新鸡腿排行榜...');
+        const ranks = await fetchCreditRank(true);
         renderRankCard(rankCard, ranks);
     };
 
     // ==================== 初始化 ====================
     const init = () => {
-        console.log('[NS助手] v1.5.0 初始化');
+        console.log('[NS助手] v1.6.0 初始化');
 
         setTimeout(doCheckin, 1500);
 
@@ -571,9 +537,13 @@
             location.pathname.startsWith('/categor');
 
         if (isListPage) {
-            setTimeout(() => {
+            setTimeout(async () => {
                 const sidebar = createSidebar();
-                loadSidebarData(sidebar);
+                await loadSidebarData(sidebar);
+
+                // 设置30分钟刷新排行榜
+                rankRefreshTimer = setInterval(refreshRankData, CONFIG.RANK_REFRESH_INTERVAL);
+                console.log('[NS助手] 排行榜将每30分钟刷新一次');
             }, 800);
         }
     };
