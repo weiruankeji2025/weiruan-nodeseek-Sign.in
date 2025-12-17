@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      1.6.0
+// @version      1.6.1
 // @description  NodeSeek论坛增强：自动签到 + 进行中交易 + 抽奖帖 + 鸡腿排行榜(30分钟刷新)
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
@@ -275,6 +275,89 @@
     };
 
     // ==================== 鸡腿排行榜 ====================
+    const parseRankFromDoc = (doc, results) => {
+        // 方法1: 查找侧边栏中的排行榜区块
+        const sidebarSelectors = [
+            '.nsk-widget', '.sidebar-widget', '.widget',
+            '[class*="rank"]', '[class*="credit"]', '[class*="leaderboard"]',
+            '.card', '.panel', 'aside > div'
+        ];
+
+        for (const selector of sidebarSelectors) {
+            doc.querySelectorAll(selector).forEach(widget => {
+                const text = widget.textContent || '';
+                // 检查是否是鸡腿/积分排行榜区块
+                if (!/鸡腿|积分|排行|rank|credit|贡献/i.test(text)) return;
+                if (results.length >= CONFIG.RANK_COUNT) return;
+
+                // 查找用户链接
+                widget.querySelectorAll('a[href*="/space/"]').forEach(link => {
+                    if (results.length >= CONFIG.RANK_COUNT) return;
+
+                    const username = link.textContent?.trim();
+                    const userUrl = link.getAttribute('href');
+                    if (!username || username.length < 2) return;
+                    if (results.some(r => r.username === username)) return;
+
+                    // 从父元素或相邻元素查找鸡腿数
+                    let credit = 0;
+                    const parent = link.closest('li, tr, div, .item, [class*="user"]') || link.parentElement;
+                    const parentText = parent?.textContent || '';
+
+                    const patterns = [
+                        /(\d[\d,]*)\s*鸡腿/,
+                        /鸡腿[：:\s]*(\d[\d,]*)/,
+                        /(\d[\d,]*)\s*(?:积分|credit|分)/i,
+                        /(?:^|[^\d])(\d{2,7})(?:[^\d]|$)/
+                    ];
+
+                    for (const pattern of patterns) {
+                        const match = parentText.match(pattern);
+                        if (match) {
+                            credit = parseInt(match[1].replace(/,/g, ''));
+                            break;
+                        }
+                    }
+
+                    results.push({
+                        rank: results.length + 1,
+                        username,
+                        url: userUrl?.startsWith('http') ? userUrl : `https://www.nodeseek.com${userUrl}`,
+                        credit
+                    });
+                });
+            });
+            if (results.length >= CONFIG.RANK_COUNT) break;
+        }
+
+        // 方法2: 查找表格形式的排行榜
+        if (results.length === 0) {
+            doc.querySelectorAll('table tr, ul li, ol li').forEach(row => {
+                if (results.length >= CONFIG.RANK_COUNT) return;
+
+                const userLink = row.querySelector('a[href*="/space/"]');
+                if (!userLink) return;
+
+                const username = userLink.textContent?.trim();
+                const userUrl = userLink.getAttribute('href');
+                if (!username || username.length < 2) return;
+                if (results.some(r => r.username === username)) return;
+
+                let credit = 0;
+                const rowText = row.textContent || '';
+                const numMatch = rowText.match(/(\d[\d,]{2,})/);
+                if (numMatch) credit = parseInt(numMatch[1].replace(/,/g, ''));
+
+                results.push({
+                    rank: results.length + 1,
+                    username,
+                    url: userUrl?.startsWith('http') ? userUrl : `https://www.nodeseek.com${userUrl}`,
+                    credit
+                });
+            });
+        }
+    };
+
     const fetchCreditRank = async (forceRefresh = false) => {
         // 检查缓存
         const cached = GM_getValue(CONFIG.RANK_CACHE_KEY);
@@ -286,109 +369,55 @@
         console.log('[NS助手] 获取全站鸡腿排行榜...');
         const results = [];
 
-        // 尝试多个可能的排行榜URL
-        const rankUrls = [
-            'https://www.nodeseek.com/rank',
-            'https://www.nodeseek.com/rank/credit',
-            'https://www.nodeseek.com/ranks',
-            'https://www.nodeseek.com/leaderboard'
-        ];
-
-        for (const url of rankUrls) {
-            try {
-                const res = await fetch(url, { credentials: 'include' });
-                if (!res.ok) continue;
-
-                const html = await res.text();
-                const doc = new DOMParser().parseFromString(html, 'text/html');
-
-                // 尝试解析排行榜数据
-                const items = doc.querySelectorAll('tr, [class*="rank-item"], [class*="user-item"], [class*="leaderboard"]');
-
-                items.forEach(item => {
-                    if (results.length >= CONFIG.RANK_COUNT) return;
-
-                    const userLink = item.querySelector('a[href*="/space/"]');
-                    if (!userLink) return;
-
-                    const username = userLink.textContent?.trim();
-                    const userUrl = userLink.getAttribute('href');
-                    if (!username || username.length < 2) return;
-
-                    // 查找鸡腿数
-                    let credit = 0;
-                    const allText = item.textContent;
-
-                    // 尝试多种匹配方式
-                    const patterns = [
-                        /(\d{1,7})\s*鸡腿/,
-                        /鸡腿[：:\s]*(\d{1,7})/,
-                        /credit[：:\s]*(\d{1,7})/i,
-                        /积分[：:\s]*(\d{1,7})/,
-                        /(\d{3,7})(?=\s*$)/  // 行末的大数字
-                    ];
-
-                    for (const pattern of patterns) {
-                        const match = allText.match(pattern);
-                        if (match) {
-                            credit = parseInt(match[1]);
-                            break;
-                        }
-                    }
-
-                    // 检查是否重复
-                    if (results.some(r => r.username === username)) return;
-
-                    results.push({
-                        rank: results.length + 1,
-                        username,
-                        url: userUrl?.startsWith('http') ? userUrl : `https://www.nodeseek.com${userUrl}`,
-                        credit
-                    });
-                });
-
-                if (results.length > 0) {
-                    console.log(`[NS助手] 从 ${url} 获取到 ${results.length} 条排行数据`);
-                    break;
-                }
-            } catch (e) {
-                console.log(`[NS助手] ${url} 获取失败:`, e.message);
+        // 方法1: 从当前页面提取（如果在首页）
+        if (location.pathname === '/' || location.pathname === '') {
+            parseRankFromDoc(document, results);
+            if (results.length > 0) {
+                console.log(`[NS助手] 从当前页面获取到 ${results.length} 条排行数据`);
             }
         }
 
-        // 如果没有获取到数据，尝试从API获取
+        // 方法2: 从首页获取
         if (results.length === 0) {
             try {
-                const apiUrls = [
-                    'https://www.nodeseek.com/api/rank/credit',
-                    'https://www.nodeseek.com/api/users/top',
-                    'https://www.nodeseek.com/api/leaderboard'
-                ];
-
-                for (const apiUrl of apiUrls) {
-                    try {
-                        const res = await fetch(apiUrl, { credentials: 'include' });
-                        if (!res.ok) continue;
-
-                        const data = await res.json();
-                        if (data && Array.isArray(data.data || data.users || data.list || data)) {
-                            const list = data.data || data.users || data.list || data;
-                            list.slice(0, CONFIG.RANK_COUNT).forEach((item, i) => {
-                                results.push({
-                                    rank: i + 1,
-                                    username: item.username || item.name || item.user,
-                                    url: `https://www.nodeseek.com/space/${item.uid || item.id || item.userId}`,
-                                    credit: item.credit || item.score || item.points || 0
-                                });
-                            });
-                            if (results.length > 0) {
-                                console.log(`[NS助手] 从API获取到 ${results.length} 条排行数据`);
-                                break;
-                            }
-                        }
-                    } catch {}
+                const res = await fetch(CONFIG.HOME_URL, { credentials: 'include' });
+                if (res.ok) {
+                    const html = await res.text();
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    parseRankFromDoc(doc, results);
+                    if (results.length > 0) {
+                        console.log(`[NS助手] 从首页获取到 ${results.length} 条排行数据`);
+                    }
                 }
-            } catch {}
+            } catch (e) {
+                console.log('[NS助手] 首页获取失败:', e.message);
+            }
+        }
+
+        // 方法3: 尝试专门的排行榜页面
+        if (results.length === 0) {
+            const rankUrls = [
+                'https://www.nodeseek.com/rank',
+                'https://www.nodeseek.com/ranks/credit'
+            ];
+
+            for (const url of rankUrls) {
+                try {
+                    const res = await fetch(url, { credentials: 'include' });
+                    if (!res.ok) continue;
+
+                    const html = await res.text();
+                    const doc = new DOMParser().parseFromString(html, 'text/html');
+                    parseRankFromDoc(doc, results);
+
+                    if (results.length > 0) {
+                        console.log(`[NS助手] 从 ${url} 获取到 ${results.length} 条排行数据`);
+                        break;
+                    }
+                } catch (e) {
+                    console.log(`[NS助手] ${url} 获取失败:`, e.message);
+                }
+            }
         }
 
         // 缓存结果
