@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      2.0.4
+// @version      2.0.5
 // @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 中奖提醒
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
@@ -283,9 +283,9 @@
             minute = match[4] || '00';
         }
 
-        // 匹配 12/20 20:00 格式
+        // 匹配 12/20 20:00 或 12.20 20:00 格式
         if (!month) {
-            match = title.match(/(\d{1,2})[\/\-.](\d{1,2})\s+(\d{1,2}):(\d{2})/);
+            match = title.match(/(\d{1,2})[\/\-.](\d{1,2})\s*(\d{1,2}):(\d{2})/);
             if (match && isValidDate(match[1], match[2])) {
                 month = match[1];
                 day = match[2];
@@ -344,25 +344,31 @@
             }
         }
 
-        // 匹配X小时后开奖
+        // 匹配X小时后 (不强制要求"开奖"关键词)
         if (!month) {
-            const hoursMatch = title.match(/(\d+)\s*[小时hH]+后?\s*开奖/);
+            const hoursMatch = title.match(/(\d+)\s*[小时hH]+后?/);
             if (hoursMatch) {
-                const future = new Date(now.getTime() + parseInt(hoursMatch[1]) * 60 * 60 * 1000);
-                month = future.getMonth() + 1;
-                day = future.getDate();
-                hour = future.getHours();
-                minute = String(future.getMinutes()).padStart(2, '0');
+                const hours = parseInt(hoursMatch[1]);
+                if (hours >= 1 && hours <= 168) {  // 1小时到7天
+                    const future = new Date(now.getTime() + hours * 60 * 60 * 1000);
+                    month = future.getMonth() + 1;
+                    day = future.getDate();
+                    hour = future.getHours();
+                    minute = String(future.getMinutes()).padStart(2, '0');
+                }
             }
         }
 
-        // 匹配X天后开奖
+        // 匹配X天后
         if (!month) {
-            const daysMatch = title.match(/(\d+)\s*天后\s*开奖/);
+            const daysMatch = title.match(/(\d+)\s*天后/);
             if (daysMatch) {
-                const future = new Date(now.getTime() + parseInt(daysMatch[1]) * 24 * 60 * 60 * 1000);
-                month = future.getMonth() + 1;
-                day = future.getDate();
+                const days = parseInt(daysMatch[1]);
+                if (days >= 1 && days <= 30) {
+                    const future = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+                    month = future.getMonth() + 1;
+                    day = future.getDate();
+                }
             }
         }
 
@@ -373,11 +379,11 @@
             return `${month}月${day}日开奖`;
         }
 
-        // 楼层开奖（必须明确包含"开奖"或"抽奖"）
-        const floorMatch = title.match(/(\d+)\s*[楼层]\s*(?:开奖|抽奖)|满\s*(\d+)\s*[楼层]\s*(?:开奖|抽奖)?/);
+        // 楼层开奖
+        const floorMatch = title.match(/(\d+)\s*[楼层](?:\s*(?:开奖|抽奖))?|满\s*(\d+)\s*[楼层]/);
         if (floorMatch) {
             const num = floorMatch[1] || floorMatch[2];
-            if (parseInt(num) >= 10) {  // 楼层数至少10
+            if (parseInt(num) >= 20) {  // 楼层数至少20才算
                 return `${num}楼开奖`;
             }
         }
@@ -395,9 +401,8 @@
             if (!/抽奖|开奖|福利|免费送|白嫖|🎁|🎉/i.test(post.title)) continue;
             if (/已开奖|已结束|已完成|结束|开奖结果/i.test(post.title)) continue;
 
-            // 提取开奖时间，只索引有开奖时间的帖子
+            // 提取开奖时间
             const lotteryTime = extractLotteryTime(post.title);
-            if (!lotteryTime) continue;
 
             seen.add(post.id);
             const cleanTitle = post.title
