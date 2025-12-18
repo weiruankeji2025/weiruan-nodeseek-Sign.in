@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      1.6.1
-// @description  NodeSeek论坛增强：自动签到 + 进行中交易 + 抽奖帖 + 鸡腿排行榜(30分钟刷新)
+// @version      2.0.0
+// @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 中奖提醒
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
 // @icon         https://www.nodeseek.com/favicon.ico
@@ -23,12 +23,12 @@
         TRADE_URL: 'https://www.nodeseek.com/categories/trade',
         HOME_URL: 'https://www.nodeseek.com/',
         STORAGE_KEY: 'ns_last_checkin',
-        RANK_CACHE_KEY: 'ns_rank_cache',
+        VISITED_KEY: 'ns_visited_posts',
+        WIN_CHECK_KEY: 'ns_win_check',
         RANDOM_MODE: true,
         TRADE_COUNT: 5,
-        LOTTERY_COUNT: 10,
-        RANK_COUNT: 10,
-        RANK_REFRESH_INTERVAL: 30 * 60 * 1000  // 30分钟刷新
+        LOTTERY_COUNT: 5,
+        WIN_CHECK_INTERVAL: 10 * 60 * 1000  // 10分钟检查一次中奖
     };
 
     // ==================== 样式注入 ====================
@@ -71,7 +71,6 @@
 
         .ns-card.trade .ns-card-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
         .ns-card.lottery .ns-card-header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #fff; }
-        .ns-card.rank .ns-card-header { background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); color: #fff; }
 
         .ns-item {
             padding: 6px 10px;
@@ -84,12 +83,24 @@
             color: #333;
             text-decoration: none;
             display: flex;
-            align-items: center;
-            gap: 5px;
+            flex-direction: column;
+            gap: 3px;
             line-height: 1.3;
             font-size: 11px;
         }
         .ns-item a:hover { color: #1890ff; }
+
+        /* 已浏览样式 */
+        .ns-item.visited { background: #f5f5f5; opacity: 0.7; }
+        .ns-item.visited a { color: #999; }
+        .ns-item.visited .ns-tag { opacity: 0.6; }
+        .ns-visited-mark { font-size: 9px; color: #52c41a; margin-left: 4px; }
+
+        .ns-item-row {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
 
         .ns-tag {
             flex-shrink: 0;
@@ -101,7 +112,7 @@
         }
         .ns-tag.sell { background: #ff7875; }
         .ns-tag.buy { background: #40a9ff; }
-        .ns-tag.active { background: #73d13d; }
+        .ns-tag.lottery { background: #73d13d; }
 
         .ns-title {
             flex: 1;
@@ -110,53 +121,11 @@
             white-space: nowrap;
         }
 
-        /* 排行榜样式 */
-        .ns-rank-item {
-            padding: 6px 10px;
-            border-bottom: 1px solid #f0f0f0;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 11px;
-        }
-        .ns-rank-item:last-child { border-bottom: none; }
-        .ns-rank-item:hover { background: #f8f9fa; }
-        .ns-rank-num {
-            width: 20px;
-            height: 20px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 11px;
-            font-weight: 700;
-            color: #fff;
-            flex-shrink: 0;
-        }
-        .ns-rank-num.r1 { background: linear-gradient(135deg, #ffd700, #ff8c00); text-shadow: 0 1px 1px rgba(0,0,0,0.2); }
-        .ns-rank-num.r2 { background: linear-gradient(135deg, #e8e8e8, #b0b0b0); }
-        .ns-rank-num.r3 { background: linear-gradient(135deg, #cd7f32, #8b4513); }
-        .ns-rank-num.rn { background: #f0f0f0; color: #666; }
-        .ns-rank-name {
-            flex: 1;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .ns-rank-name a { color: #333; text-decoration: none; font-weight: 500; }
-        .ns-rank-name a:hover { color: #1890ff; }
-        .ns-rank-credit {
+        /* 开奖时间样式 */
+        .ns-lottery-time {
+            font-size: 9px;
             color: #fa8c16;
-            font-weight: 600;
-            font-size: 11px;
-            white-space: nowrap;
-        }
-        .ns-rank-footer {
-            padding: 6px 10px;
-            text-align: center;
-            font-size: 10px;
-            color: #999;
-            border-top: 1px solid #f0f0f0;
+            padding-left: 24px;
         }
 
         .ns-empty { text-align: center; padding: 15px 10px; color: #999; font-size: 11px; }
@@ -164,11 +133,13 @@
 
         @media (prefers-color-scheme: dark) {
             .ns-card { background: #242424; box-shadow: 0 1px 6px rgba(0,0,0,0.3); }
-            .ns-item, .ns-rank-item, .ns-rank-footer { border-color: #333; }
-            .ns-item:hover, .ns-rank-item:hover { background: #2d2d2d; }
-            .ns-item a, .ns-rank-name a { color: #e0e0e0; }
-            .ns-rank-num.rn { background: #333; color: #aaa; }
-            .ns-empty, .ns-rank-footer { color: #666; }
+            .ns-item { border-color: #333; }
+            .ns-item:hover { background: #2d2d2d; }
+            .ns-item a { color: #e0e0e0; }
+            .ns-item.visited { background: #1a1a1a; }
+            .ns-item.visited a { color: #666; }
+            .ns-empty { color: #666; }
+            .ns-lottery-time { color: #d48806; }
         }
 
         @media (max-width: 1400px) { .ns-sidebar { display: none; } }
@@ -177,8 +148,8 @@
     // ==================== 工具函数 ====================
     const getToday = () => new Date().toISOString().slice(0, 10);
     const hasCheckedIn = () => GM_getValue(CONFIG.STORAGE_KEY) === getToday();
-    const notify = (title, text) => {
-        GM_notification({ title, text, timeout: 3000 });
+    const notify = (title, text, onclick) => {
+        GM_notification({ title, text, timeout: 5000, onclick });
         console.log(`[NS助手] ${title}: ${text}`);
     };
     const extractPostId = (url) => url?.match(/\/post-(\d+)/)?.[1];
@@ -191,10 +162,30 @@
         if (!str) return '';
         return str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     };
-    const formatNumber = (num) => {
-        if (num >= 10000) return (num / 10000).toFixed(1) + 'w';
-        if (num >= 1000) return (num / 1000).toFixed(1) + 'k';
-        return num.toString();
+
+    // ==================== 已浏览帖子管理 ====================
+    const getVisitedPosts = () => {
+        try {
+            return GM_getValue(CONFIG.VISITED_KEY) || {};
+        } catch {
+            return {};
+        }
+    };
+
+    const markAsVisited = (postId) => {
+        const visited = getVisitedPosts();
+        visited[postId] = Date.now();
+        // 只保留最近30天的记录
+        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        for (const id in visited) {
+            if (visited[id] < cutoff) delete visited[id];
+        }
+        GM_setValue(CONFIG.VISITED_KEY, visited);
+    };
+
+    const isVisited = (postId) => {
+        const visited = getVisitedPosts();
+        return !!visited[postId];
     };
 
     // ==================== 签到功能 ====================
@@ -219,8 +210,8 @@
         }
     };
 
-    // ==================== 数据获取 ====================
-    const fetchPagePosts = async (url) => {
+    // ==================== 数据获取（仅标题） ====================
+    const fetchPageTitles = async (url) => {
         try {
             const res = await fetch(url, { credentials: 'include' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -236,7 +227,11 @@
                 if (!postId || !title || title.length < 3 || seen.has(postId)) return;
                 if (link.closest('.pagination, [class*="page"]')) return;
                 seen.add(postId);
-                posts.push({ id: postId, title, url: href.startsWith('http') ? href : `https://www.nodeseek.com${href}` });
+                posts.push({
+                    id: postId,
+                    title,
+                    url: href.startsWith('http') ? href : `https://www.nodeseek.com${href}`
+                });
             });
             return posts;
         } catch (e) {
@@ -245,192 +240,184 @@
         }
     };
 
+    // ==================== 交易帖获取 ====================
     const fetchActiveTrades = async () => {
-        const posts = await fetchPagePosts(CONFIG.TRADE_URL);
+        const posts = await fetchPageTitles(CONFIG.TRADE_URL);
         const results = [];
         for (const post of posts) {
             if (results.length >= CONFIG.TRADE_COUNT) break;
+            // 只根据标题判断
             if (/已出|已收|已售|sold|closed/i.test(post.title)) continue;
             const isBuy = /收|求|buy|购/i.test(post.title);
-            results.push({ title: post.title, url: post.url, type: isBuy ? 'buy' : 'sell', tag: isBuy ? '求购' : '出售' });
+            results.push({
+                id: post.id,
+                title: post.title,
+                url: post.url,
+                type: isBuy ? 'buy' : 'sell',
+                tag: isBuy ? '求购' : '出售',
+                visited: isVisited(post.id)
+            });
         }
         return results;
+    };
+
+    // ==================== 抽奖帖获取（含开奖时间） ====================
+    const extractLotteryTime = (title) => {
+        // 从标题提取开奖时间
+        const patterns = [
+            /(\d{1,2})[月\/\-.](\d{1,2})[日号]?\s*(\d{1,2})[时点:：]?(\d{0,2})?/,  // 12月20日 20:00
+            /(\d{1,2})[\/\-.](\d{1,2})\s+(\d{1,2}):(\d{2})/,  // 12/20 20:00
+            /(\d{1,2})[时点]开奖/,  // 20点开奖
+            /(\d+)\s*小时后/,  // 24小时后
+            /今[天晚].*?(\d{1,2})[时点:：]/,  // 今晚8点
+            /明[天日].*?(\d{1,2})[时点:：]/,  // 明天20点
+        ];
+
+        for (const pattern of patterns) {
+            const match = title.match(pattern);
+            if (match) {
+                // 简单返回匹配到的时间描述
+                return match[0];
+            }
+        }
+        return null;
     };
 
     const fetchActiveLotteries = async () => {
-        const allPosts = [];
-        for (const url of [CONFIG.HOME_URL, CONFIG.HOME_URL + '?page=2']) {
-            allPosts.push(...await fetchPagePosts(url));
-        }
+        const posts = await fetchPageTitles(CONFIG.HOME_URL);
         const results = [], seen = new Set();
-        for (const post of allPosts) {
+
+        for (const post of posts) {
             if (results.length >= CONFIG.LOTTERY_COUNT || seen.has(post.id)) continue;
+            // 只根据标题判断是否是抽奖帖
             if (!/抽奖|开奖|福利|免费送|白嫖|送\d+|🎁|🎉/i.test(post.title)) continue;
             if (/已开奖|已结束|已完成|结束|开奖结果/i.test(post.title)) continue;
+
             seen.add(post.id);
-            const cleanTitle = post.title.replace(/[\[【(（]?\s*(抽奖|开奖|福利)\s*[\]】)）]?/gi, '').replace(/^\s*[:：]\s*/, '').trim();
-            results.push({ title: cleanTitle || post.title, url: post.url, type: 'active', tag: '抽奖' });
+            const lotteryTime = extractLotteryTime(post.title);
+            const cleanTitle = post.title
+                .replace(/[\[【(（]?\s*(抽奖|开奖|福利)\s*[\]】)）]?/gi, '')
+                .replace(/^\s*[:：]\s*/, '')
+                .trim();
+
+            results.push({
+                id: post.id,
+                title: cleanTitle || post.title,
+                url: post.url,
+                tag: '抽奖',
+                lotteryTime,
+                visited: isVisited(post.id)
+            });
         }
         return results;
     };
 
-    // ==================== 鸡腿排行榜 ====================
-    const parseRankFromDoc = (doc, results) => {
-        // 方法1: 查找侧边栏中的排行榜区块
-        const sidebarSelectors = [
-            '.nsk-widget', '.sidebar-widget', '.widget',
-            '[class*="rank"]', '[class*="credit"]', '[class*="leaderboard"]',
-            '.card', '.panel', 'aside > div'
-        ];
-
-        for (const selector of sidebarSelectors) {
-            doc.querySelectorAll(selector).forEach(widget => {
-                const text = widget.textContent || '';
-                // 检查是否是鸡腿/积分排行榜区块
-                if (!/鸡腿|积分|排行|rank|credit|贡献/i.test(text)) return;
-                if (results.length >= CONFIG.RANK_COUNT) return;
-
-                // 查找用户链接
-                widget.querySelectorAll('a[href*="/space/"]').forEach(link => {
-                    if (results.length >= CONFIG.RANK_COUNT) return;
-
-                    const username = link.textContent?.trim();
-                    const userUrl = link.getAttribute('href');
-                    if (!username || username.length < 2) return;
-                    if (results.some(r => r.username === username)) return;
-
-                    // 从父元素或相邻元素查找鸡腿数
-                    let credit = 0;
-                    const parent = link.closest('li, tr, div, .item, [class*="user"]') || link.parentElement;
-                    const parentText = parent?.textContent || '';
-
-                    const patterns = [
-                        /(\d[\d,]*)\s*鸡腿/,
-                        /鸡腿[：:\s]*(\d[\d,]*)/,
-                        /(\d[\d,]*)\s*(?:积分|credit|分)/i,
-                        /(?:^|[^\d])(\d{2,7})(?:[^\d]|$)/
-                    ];
-
-                    for (const pattern of patterns) {
-                        const match = parentText.match(pattern);
-                        if (match) {
-                            credit = parseInt(match[1].replace(/,/g, ''));
-                            break;
-                        }
-                    }
-
-                    results.push({
-                        rank: results.length + 1,
-                        username,
-                        url: userUrl?.startsWith('http') ? userUrl : `https://www.nodeseek.com${userUrl}`,
-                        credit
-                    });
-                });
-            });
-            if (results.length >= CONFIG.RANK_COUNT) break;
-        }
-
-        // 方法2: 查找表格形式的排行榜
-        if (results.length === 0) {
-            doc.querySelectorAll('table tr, ul li, ol li').forEach(row => {
-                if (results.length >= CONFIG.RANK_COUNT) return;
-
-                const userLink = row.querySelector('a[href*="/space/"]');
-                if (!userLink) return;
-
-                const username = userLink.textContent?.trim();
-                const userUrl = userLink.getAttribute('href');
-                if (!username || username.length < 2) return;
-                if (results.some(r => r.username === username)) return;
-
-                let credit = 0;
-                const rowText = row.textContent || '';
-                const numMatch = rowText.match(/(\d[\d,]{2,})/);
-                if (numMatch) credit = parseInt(numMatch[1].replace(/,/g, ''));
-
-                results.push({
-                    rank: results.length + 1,
-                    username,
-                    url: userUrl?.startsWith('http') ? userUrl : `https://www.nodeseek.com${userUrl}`,
-                    credit
-                });
-            });
+    // ==================== 中奖检测 ====================
+    const getParticipatedLotteries = () => {
+        try {
+            return GM_getValue(CONFIG.WIN_CHECK_KEY) || {};
+        } catch {
+            return {};
         }
     };
 
-    const fetchCreditRank = async (forceRefresh = false) => {
-        // 检查缓存
-        const cached = GM_getValue(CONFIG.RANK_CACHE_KEY);
-        if (!forceRefresh && cached && Date.now() - cached.time < CONFIG.RANK_REFRESH_INTERVAL) {
-            console.log('[NS助手] 使用排行榜缓存');
-            return cached.data;
+    const addParticipatedLottery = (postId, title) => {
+        const participated = getParticipatedLotteries();
+        if (!participated[postId]) {
+            participated[postId] = { title, addedAt: Date.now(), checked: false };
+            GM_setValue(CONFIG.WIN_CHECK_KEY, participated);
         }
+    };
 
-        console.log('[NS助手] 获取全站鸡腿排行榜...');
-        const results = [];
+    const checkWinStatus = async () => {
+        const participated = getParticipatedLotteries();
+        const postIds = Object.keys(participated).filter(id => !participated[id].won);
 
-        // 方法1: 从当前页面提取（如果在首页）
-        if (location.pathname === '/' || location.pathname === '') {
-            parseRankFromDoc(document, results);
-            if (results.length > 0) {
-                console.log(`[NS助手] 从当前页面获取到 ${results.length} 条排行数据`);
-            }
-        }
+        if (postIds.length === 0) return;
 
-        // 方法2: 从首页获取
-        if (results.length === 0) {
+        console.log(`[NS助手] 检查 ${postIds.length} 个抽奖帖的中奖状态...`);
+
+        for (const postId of postIds.slice(0, 5)) {  // 每次最多检查5个
             try {
-                const res = await fetch(CONFIG.HOME_URL, { credentials: 'include' });
-                if (res.ok) {
-                    const html = await res.text();
-                    const doc = new DOMParser().parseFromString(html, 'text/html');
-                    parseRankFromDoc(doc, results);
-                    if (results.length > 0) {
-                        console.log(`[NS助手] 从首页获取到 ${results.length} 条排行数据`);
+                const res = await fetch(`https://www.nodeseek.com/post-${postId}.html`, {
+                    credentials: 'include'
+                });
+                if (!res.ok) continue;
+
+                const html = await res.text();
+
+                // 获取当前用户名
+                const usernameMatch = html.match(/data-username="([^"]+)"/);
+                if (!usernameMatch) continue;
+                const currentUser = usernameMatch[1];
+
+                // 检查是否中奖（在开奖结果中出现用户名）
+                const isEnded = /已开奖|开奖结果|中奖名单|恭喜.*中奖/i.test(html);
+                if (isEnded) {
+                    const winPattern = new RegExp(`@${currentUser}|恭喜\\s*${currentUser}|中奖.*${currentUser}|${currentUser}.*中奖`, 'i');
+                    const isWinner = winPattern.test(html);
+
+                    participated[postId].checked = true;
+                    participated[postId].ended = true;
+
+                    if (isWinner) {
+                        participated[postId].won = true;
+                        const title = participated[postId].title || '未知抽奖';
+                        notify('🎉 恭喜中奖！', `您在「${truncate(title, 20)}」中奖了！`, () => {
+                            window.open(`https://www.nodeseek.com/post-${postId}.html`, '_blank');
+                        });
                     }
                 }
+
+                GM_setValue(CONFIG.WIN_CHECK_KEY, participated);
+
+                // 延迟避免请求过快
+                await new Promise(r => setTimeout(r, 1000));
             } catch (e) {
-                console.log('[NS助手] 首页获取失败:', e.message);
+                console.log(`[NS助手] 检查帖子 ${postId} 失败:`, e.message);
             }
         }
+    };
 
-        // 方法3: 尝试专门的排行榜页面
-        if (results.length === 0) {
-            const rankUrls = [
-                'https://www.nodeseek.com/rank',
-                'https://www.nodeseek.com/ranks/credit'
-            ];
+    // 监控当前页面是否参与抽奖
+    const monitorLotteryParticipation = () => {
+        const postId = extractPostId(location.href);
+        if (!postId) return;
 
-            for (const url of rankUrls) {
-                try {
-                    const res = await fetch(url, { credentials: 'include' });
-                    if (!res.ok) continue;
+        // 检查页面是否是抽奖帖
+        const pageTitle = document.title || '';
+        if (!/抽奖|开奖|福利|免费送/i.test(pageTitle)) return;
 
-                    const html = await res.text();
-                    const doc = new DOMParser().parseFromString(html, 'text/html');
-                    parseRankFromDoc(doc, results);
+        // 监控评论提交
+        const observer = new MutationObserver(() => {
+            const hasCommented = document.querySelector('.comment-list .comment-item');
+            if (hasCommented) {
+                addParticipatedLottery(postId, pageTitle.replace(/ - NodeSeek$/, ''));
+                console.log(`[NS助手] 已记录参与抽奖: ${postId}`);
+            }
+        });
 
-                    if (results.length > 0) {
-                        console.log(`[NS助手] 从 ${url} 获取到 ${results.length} 条排行数据`);
-                        break;
+        const commentList = document.querySelector('.comment-list, .post-comments, [class*="comment"]');
+        if (commentList) {
+            observer.observe(commentList, { childList: true, subtree: true });
+        }
+
+        // 同时检查是否已经评论过
+        setTimeout(() => {
+            const currentUser = document.querySelector('[data-username]')?.getAttribute('data-username');
+            if (currentUser) {
+                const comments = document.querySelectorAll('.comment-item, [class*="comment"]');
+                comments.forEach(comment => {
+                    if (comment.textContent?.includes(currentUser)) {
+                        addParticipatedLottery(postId, pageTitle.replace(/ - NodeSeek$/, ''));
                     }
-                } catch (e) {
-                    console.log(`[NS助手] ${url} 获取失败:`, e.message);
-                }
+                });
             }
-        }
-
-        // 缓存结果
-        if (results.length > 0) {
-            GM_setValue(CONFIG.RANK_CACHE_KEY, { data: results, time: Date.now() });
-        }
-
-        return results;
+        }, 2000);
     };
 
     // ==================== 侧边栏UI ====================
     let sidebarInstance = null;
-    let rankRefreshTimer = null;
 
     const createSidebar = () => {
         document.querySelector('.ns-sidebar')?.remove();
@@ -440,21 +427,14 @@
         sidebar.innerHTML = `
             <div class="ns-card trade">
                 <div class="ns-card-header">
-                    <span>💰 进行中交易</span>
+                    <span>💰 最新交易</span>
                     <span class="ns-card-toggle">−</span>
                 </div>
                 <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
             </div>
             <div class="ns-card lottery">
                 <div class="ns-card-header">
-                    <span>🎁 进行中抽奖</span>
-                    <span class="ns-card-toggle">−</span>
-                </div>
-                <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
-            </div>
-            <div class="ns-card rank">
-                <div class="ns-card-header">
-                    <span>🏆 鸡腿排行榜</span>
+                    <span>🎁 最新抽奖</span>
                     <span class="ns-card-toggle">−</span>
                 </div>
                 <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
@@ -479,88 +459,97 @@
     const renderTradeCard = (card, items) => {
         const body = card.querySelector('.ns-card-body');
         if (!items?.length) {
-            body.innerHTML = '<div class="ns-empty">暂无进行中交易</div>';
+            body.innerHTML = '<div class="ns-empty">暂无交易信息</div>';
             return;
         }
         body.innerHTML = items.map(item => `
-            <div class="ns-item">
+            <div class="ns-item ${item.visited ? 'visited' : ''}" data-post-id="${item.id}">
                 <a href="${escapeHtml(item.url)}" target="_blank" title="${escapeHtml(item.title)}">
-                    <span class="ns-tag ${item.type}">${item.tag}</span>
-                    <span class="ns-title">${escapeHtml(truncate(item.title, 18))}</span>
+                    <div class="ns-item-row">
+                        <span class="ns-tag ${item.type}">${item.tag}</span>
+                        <span class="ns-title">${escapeHtml(truncate(item.title, 18))}</span>
+                        ${item.visited ? '<span class="ns-visited-mark">✓已看</span>' : ''}
+                    </div>
                 </a>
             </div>
         `).join('');
+
+        // 添加点击事件标记已浏览
+        body.querySelectorAll('.ns-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const postId = el.getAttribute('data-post-id');
+                if (postId) {
+                    markAsVisited(postId);
+                    el.classList.add('visited');
+                    if (!el.querySelector('.ns-visited-mark')) {
+                        el.querySelector('.ns-item-row')?.insertAdjacentHTML('beforeend',
+                            '<span class="ns-visited-mark">✓已看</span>');
+                    }
+                }
+            });
+        });
     };
 
     const renderLotteryCard = (card, items) => {
         const body = card.querySelector('.ns-card-body');
         if (!items?.length) {
-            body.innerHTML = '<div class="ns-empty">暂无进行中抽奖</div>';
+            body.innerHTML = '<div class="ns-empty">暂无抽奖信息</div>';
             return;
         }
         body.innerHTML = items.map(item => `
-            <div class="ns-item">
+            <div class="ns-item ${item.visited ? 'visited' : ''}" data-post-id="${item.id}">
                 <a href="${escapeHtml(item.url)}" target="_blank" title="${escapeHtml(item.title)}">
-                    <span class="ns-tag ${item.type}">${item.tag}</span>
-                    <span class="ns-title">${escapeHtml(truncate(item.title, 18))}</span>
+                    <div class="ns-item-row">
+                        <span class="ns-tag lottery">${item.tag}</span>
+                        <span class="ns-title">${escapeHtml(truncate(item.title, 18))}</span>
+                        ${item.visited ? '<span class="ns-visited-mark">✓已看</span>' : ''}
+                    </div>
+                    ${item.lotteryTime ? `<div class="ns-lottery-time">⏰ ${escapeHtml(item.lotteryTime)}</div>` : ''}
                 </a>
             </div>
         `).join('');
-    };
 
-    const renderRankCard = (card, items) => {
-        const body = card.querySelector('.ns-card-body');
-        if (!items?.length) {
-            body.innerHTML = '<div class="ns-empty">暂无排行数据</div>';
-            return;
-        }
-
-        const now = new Date();
-        const nextRefresh = new Date(now.getTime() + CONFIG.RANK_REFRESH_INTERVAL);
-        const refreshTime = `${nextRefresh.getHours().toString().padStart(2, '0')}:${nextRefresh.getMinutes().toString().padStart(2, '0')}`;
-
-        body.innerHTML = items.map(item => {
-            const rankClass = item.rank === 1 ? 'r1' : item.rank === 2 ? 'r2' : item.rank === 3 ? 'r3' : 'rn';
-            return `
-                <div class="ns-rank-item">
-                    <span class="ns-rank-num ${rankClass}">${item.rank}</span>
-                    <span class="ns-rank-name">
-                        <a href="${escapeHtml(item.url)}" target="_blank">${escapeHtml(truncate(item.username, 10))}</a>
-                    </span>
-                    <span class="ns-rank-credit">🍗 ${item.credit > 0 ? formatNumber(item.credit) : '-'}</span>
-                </div>
-            `;
-        }).join('') + `<div class="ns-rank-footer">每30分钟更新 · 下次 ${refreshTime}</div>`;
+        // 添加点击事件标记已浏览
+        body.querySelectorAll('.ns-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const postId = el.getAttribute('data-post-id');
+                if (postId) {
+                    markAsVisited(postId);
+                    el.classList.add('visited');
+                    if (!el.querySelector('.ns-visited-mark')) {
+                        el.querySelector('.ns-item-row')?.insertAdjacentHTML('beforeend',
+                            '<span class="ns-visited-mark">✓已看</span>');
+                    }
+                }
+            });
+        });
     };
 
     const loadSidebarData = async (sidebar) => {
-        const [trades, lotteries, ranks] = await Promise.all([
+        const [trades, lotteries] = await Promise.all([
             fetchActiveTrades(),
-            fetchActiveLotteries(),
-            fetchCreditRank()
+            fetchActiveLotteries()
         ]);
 
         renderTradeCard(sidebar.querySelector('.ns-card.trade'), trades);
         renderLotteryCard(sidebar.querySelector('.ns-card.lottery'), lotteries);
-        renderRankCard(sidebar.querySelector('.ns-card.rank'), ranks);
-    };
-
-    const refreshRankData = async () => {
-        if (!sidebarInstance) return;
-        const rankCard = sidebarInstance.querySelector('.ns-card.rank');
-        if (!rankCard) return;
-
-        console.log('[NS助手] 刷新鸡腿排行榜...');
-        const ranks = await fetchCreditRank(true);
-        renderRankCard(rankCard, ranks);
     };
 
     // ==================== 初始化 ====================
     const init = () => {
-        console.log('[NS助手] v1.6.0 初始化');
+        console.log('[NS助手] v2.0.0 初始化');
 
+        // 自动签到
         setTimeout(doCheckin, 1500);
 
+        // 监控抽奖参与
+        monitorLotteryParticipation();
+
+        // 定期检查中奖
+        setTimeout(checkWinStatus, 5000);
+        setInterval(checkWinStatus, CONFIG.WIN_CHECK_INTERVAL);
+
+        // 列表页显示侧边栏
         const isListPage = location.pathname === '/' ||
             location.pathname.startsWith('/board') ||
             location.pathname.startsWith('/categor');
@@ -569,10 +558,6 @@
             setTimeout(async () => {
                 const sidebar = createSidebar();
                 await loadSidebarData(sidebar);
-
-                // 设置30分钟刷新排行榜
-                rankRefreshTimer = setInterval(refreshRankData, CONFIG.RANK_REFRESH_INTERVAL);
-                console.log('[NS助手] 排行榜将每30分钟刷新一次');
             }, 800);
         }
     };
