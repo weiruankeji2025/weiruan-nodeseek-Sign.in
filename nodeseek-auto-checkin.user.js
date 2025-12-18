@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      2.1.0
+// @version      2.1.1
 // @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 技术帖 + 骗子曝光 + 鸡腿统计
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
@@ -294,42 +294,121 @@
                 return data;
             }
         } catch {}
-        return { date: getToday(), checkin: 0, post: 0, reply: 0, liked: 0, total: 0 };
+        return { date: getToday(), checkin: 0, total: 0, currentTotal: 0 };
+    };
+
+    const saveChickenStats = (stats) => {
+        stats.date = getToday();
+        GM_setValue(CONFIG.CHICKEN_KEY, stats);
     };
 
     const updateChickenStats = (type, amount) => {
+        if (!amount || amount <= 0) return;
         const stats = getChickenStats();
         stats[type] = (stats[type] || 0) + amount;
-        stats.total = (stats.checkin || 0) + (stats.post || 0) + (stats.reply || 0) + (stats.liked || 0);
-        stats.date = getToday();
-        GM_setValue(CONFIG.CHICKEN_KEY, stats);
-        return stats;
+        stats.total = (stats.total || 0) + amount;
+        saveChickenStats(stats);
     };
 
     const fetchTodayChicken = async () => {
-        // 尝试从用户通知页面获取今日鸡腿数据
+        let stats = getChickenStats();
+
         try {
-            const res = await fetch('https://www.nodeseek.com/notification', { credentials: 'include' });
-            if (!res.ok) return getChickenStats();
-
-            const html = await res.text();
-            const today = getToday();
-            let stats = getChickenStats();
-
-            // 简单解析：查找今天的鸡腿通知
-            const patterns = [
-                { regex: /签到.*?(\d+).*?鸡腿/g, type: 'checkin' },
-                { regex: /发帖.*?(\d+).*?鸡腿/g, type: 'post' },
-                { regex: /回复.*?(\d+).*?鸡腿/g, type: 'reply' },
-                { regex: /点赞.*?(\d+).*?鸡腿|获得.*?(\d+).*?赞/g, type: 'liked' }
+            // 方法1: 从页面头部用户菜单获取鸡腿数
+            // NodeSeek 通常在用户下拉菜单或头部显示积分
+            const selectors = [
+                '.header-user-info .credit',
+                '.user-credit',
+                '.nsk-credit',
+                '[class*="credit"]',
+                '.user-menu .credit',
+                '.dropdown-menu .credit',
+                'a[href*="/space/"] + *',
+                '.navbar .user-info span'
             ];
 
-            // 简化处理：返回缓存的数据
-            return stats;
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el) {
+                    const text = el.textContent || '';
+                    const match = text.match(/(\d+)/);
+                    if (match && parseInt(match[1]) > 0) {
+                        stats.currentTotal = parseInt(match[1]);
+                        break;
+                    }
+                }
+            }
+
+            // 方法2: 查找包含"鸡腿"文字的元素
+            if (!stats.currentTotal) {
+                document.querySelectorAll('span, div, a').forEach(el => {
+                    if (stats.currentTotal) return;
+                    const text = el.textContent || '';
+                    if (text.includes('鸡腿') || text.includes('积分')) {
+                        const match = text.match(/(\d+)/);
+                        if (match && parseInt(match[1]) > 0) {
+                            stats.currentTotal = parseInt(match[1]);
+                        }
+                    }
+                });
+            }
+
+            // 方法3: 从个人空间页面获取
+            if (!stats.currentTotal) {
+                const userLink = document.querySelector('a[href*="/space/"]');
+                if (userLink) {
+                    const spaceUrl = userLink.getAttribute('href');
+                    const fullUrl = spaceUrl.startsWith('http') ? spaceUrl : `https://www.nodeseek.com${spaceUrl}`;
+                    try {
+                        const res = await fetch(fullUrl, { credentials: 'include' });
+                        if (res.ok) {
+                            const html = await res.text();
+                            // 多种匹配模式
+                            const patterns = [
+                                /鸡腿[：:\s]*(\d+)/,
+                                /(\d+)\s*鸡腿/,
+                                /积分[：:\s]*(\d+)/,
+                                /(\d+)\s*积分/,
+                                /credit[：:\s]*(\d+)/i
+                            ];
+                            for (const pattern of patterns) {
+                                const match = html.match(pattern);
+                                if (match) {
+                                    stats.currentTotal = parseInt(match[1]);
+                                    break;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.log('[NS助手] 获取用户空间失败:', e.message);
+                    }
+                }
+            }
+
+            // 记录今日起始值并计算变化
+            const startKey = 'ns_chicken_start';
+            const startData = GM_getValue(startKey);
+
+            if (startData && startData.date === getToday()) {
+                // 今天已有起始值
+                if (stats.currentTotal > 0 && startData.start > 0) {
+                    const change = stats.currentTotal - startData.start;
+                    // 总变化 = 当前 - 起始值（不含签到）+ 签到奖励
+                    stats.todayChange = change + (stats.checkin || 0);
+                }
+            } else if (stats.currentTotal > 0) {
+                // 新的一天，记录起始值（减去今天已获得的签到奖励）
+                const startValue = stats.currentTotal - (stats.checkin || 0);
+                GM_setValue(startKey, { date: getToday(), start: startValue });
+                stats.todayChange = stats.checkin || 0;
+            }
+
+            saveChickenStats(stats);
         } catch (e) {
             console.log('[NS助手] 获取鸡腿统计失败:', e.message);
-            return getChickenStats();
         }
+
+        return stats;
     };
 
     // ==================== 数据获取 ====================
@@ -654,15 +733,25 @@
 
     const renderChickenCard = (card, stats) => {
         const body = card.querySelector('.ns-card-body');
+        const hasTotal = stats.currentTotal > 0;
+        const todayChange = stats.todayChange || stats.checkin || 0;
+
         body.innerHTML = `
             <div class="ns-chicken-stats">
-                <div class="ns-chicken-total">🍗 ${stats.total || 0}</div>
-                <div class="ns-chicken-detail">
-                    <span class="ns-chicken-item">签到 +${stats.checkin || 0}</span>
-                    <span class="ns-chicken-item">发帖 +${stats.post || 0}</span>
-                    <span class="ns-chicken-item">回帖 +${stats.reply || 0}</span>
-                    <span class="ns-chicken-item">被赞 +${stats.liked || 0}</span>
-                </div>
+                ${hasTotal ? `
+                    <div class="ns-chicken-total">🍗 ${stats.currentTotal}</div>
+                    <div class="ns-chicken-detail">
+                        <span class="ns-chicken-item">今日 +${todayChange}</span>
+                        ${stats.checkin ? `<span class="ns-chicken-item">签到 +${stats.checkin}</span>` : ''}
+                        ${todayChange > stats.checkin ? `<span class="ns-chicken-item">其他 +${todayChange - (stats.checkin || 0)}</span>` : ''}
+                    </div>
+                ` : `
+                    <div class="ns-chicken-total">🍗 +${stats.checkin || 0}</div>
+                    <div class="ns-chicken-detail">
+                        <span class="ns-chicken-item">今日签到 +${stats.checkin || 0}</span>
+                        <span class="ns-chicken-item" style="color:#999">总数获取中...</span>
+                    </div>
+                `}
             </div>
         `;
     };
@@ -718,7 +807,7 @@
 
     // ==================== 初始化 ====================
     const init = async () => {
-        console.log('[NS助手] v2.1.0 初始化');
+        console.log('[NS助手] v2.1.1 初始化');
 
         // 记录当前浏览的帖子
         trackCurrentPost();
