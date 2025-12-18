@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      2.0.6
-// @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 中奖提醒
+// @version      2.1.0
+// @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 技术帖 + 骗子曝光 + 鸡腿统计
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
 // @icon         https://www.nodeseek.com/favicon.ico
@@ -21,18 +21,42 @@
     const CONFIG = {
         API_URL: 'https://www.nodeseek.com/api/attendance',
         TRADE_URL: 'https://www.nodeseek.com/categories/trade',
+        TECH_URL: 'https://www.nodeseek.com/categories/technical',
+        SCAM_URL: 'https://www.nodeseek.com/categories/scam',
         HOME_URL: 'https://www.nodeseek.com/',
         STORAGE_KEY: 'ns_last_checkin',
         VISITED_KEY: 'ns_visited_posts',
         WIN_CHECK_KEY: 'ns_win_check',
+        CHICKEN_KEY: 'ns_chicken_today',
         RANDOM_MODE: true,
         TRADE_COUNT: 5,
         LOTTERY_COUNT: 5,
-        WIN_CHECK_INTERVAL: 10 * 60 * 1000  // 10分钟检查一次中奖
+        TECH_COUNT: 5,
+        SCAM_COUNT: 5,
+        WIN_CHECK_INTERVAL: 10 * 60 * 1000
     };
 
     // ==================== 样式注入 ====================
     GM_addStyle(`
+        /* 全站已浏览帖子标记 */
+        .post-list a.ns-visited-post,
+        .post-item a.ns-visited-post,
+        [class*="post"] a.ns-visited-post,
+        a.post-title.ns-visited-post {
+            color: #e74c3c !important;
+            position: relative;
+        }
+        .post-list a.ns-visited-post::after,
+        .post-item a.ns-visited-post::after,
+        [class*="post"] a.ns-visited-post::after,
+        a.post-title.ns-visited-post::after {
+            content: ' [已浏览]';
+            font-size: 10px;
+            color: #e74c3c;
+            font-weight: normal;
+        }
+
+        /* 侧边栏 */
         .ns-sidebar {
             position: fixed;
             right: 10px;
@@ -43,7 +67,7 @@
             z-index: 9998;
             display: flex;
             flex-direction: column;
-            gap: 8px;
+            gap: 6px;
             scrollbar-width: thin;
         }
         .ns-sidebar::-webkit-scrollbar { width: 4px; }
@@ -57,23 +81,26 @@
             font-size: 12px;
         }
         .ns-card-header {
-            padding: 8px 10px;
+            padding: 6px 10px;
             font-weight: 600;
-            font-size: 12px;
+            font-size: 11px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             cursor: pointer;
             user-select: none;
         }
-        .ns-card-toggle { opacity: 0.7; font-size: 11px; }
+        .ns-card-toggle { opacity: 0.7; font-size: 10px; }
         .ns-card.collapsed .ns-card-body { display: none; }
 
+        .ns-card.chicken .ns-card-header { background: linear-gradient(135deg, #ffd93d 0%, #ff6b6b 100%); color: #fff; }
         .ns-card.trade .ns-card-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
         .ns-card.lottery .ns-card-header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #fff; }
+        .ns-card.tech .ns-card-header { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #fff; }
+        .ns-card.scam .ns-card-header { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: #fff; }
 
         .ns-item {
-            padding: 6px 10px;
+            padding: 5px 10px;
             border-bottom: 1px solid #f0f0f0;
             transition: background 0.15s;
         }
@@ -84,17 +111,16 @@
             text-decoration: none;
             display: flex;
             flex-direction: column;
-            gap: 3px;
+            gap: 2px;
             line-height: 1.3;
             font-size: 11px;
         }
         .ns-item a:hover { color: #1890ff; }
 
-        /* 已浏览样式 */
-        .ns-item.visited { background: #f5f5f5; opacity: 0.7; }
-        .ns-item.visited a { color: #999; }
-        .ns-item.visited .ns-tag { opacity: 0.6; }
-        .ns-visited-mark { font-size: 9px; color: #52c41a; margin-left: 4px; }
+        .ns-item.visited { background: #fff5f5; }
+        .ns-item.visited a { color: #e74c3c; }
+        .ns-item.visited .ns-tag { opacity: 0.7; }
+        .ns-visited-mark { font-size: 9px; color: #e74c3c; margin-left: 4px; }
 
         .ns-item-row {
             display: flex;
@@ -113,6 +139,8 @@
         .ns-tag.sell { background: #ff7875; }
         .ns-tag.buy { background: #40a9ff; }
         .ns-tag.lottery { background: #73d13d; }
+        .ns-tag.tech { background: #36cfc9; }
+        .ns-tag.scam { background: #ff4d4f; }
 
         .ns-title {
             flex: 1;
@@ -121,14 +149,37 @@
             white-space: nowrap;
         }
 
-        /* 开奖时间样式 */
         .ns-lottery-time {
             font-size: 9px;
             color: #fa8c16;
             padding-left: 24px;
         }
 
-        .ns-empty { text-align: center; padding: 15px 10px; color: #999; font-size: 11px; }
+        /* 鸡腿统计样式 */
+        .ns-chicken-stats {
+            padding: 8px 10px;
+        }
+        .ns-chicken-total {
+            font-size: 18px;
+            font-weight: 700;
+            color: #fa8c16;
+            text-align: center;
+            margin-bottom: 6px;
+        }
+        .ns-chicken-detail {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            font-size: 10px;
+            color: #666;
+        }
+        .ns-chicken-item {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .ns-empty { text-align: center; padding: 10px; color: #999; font-size: 11px; }
         .ns-loading { color: #1890ff; }
 
         @media (prefers-color-scheme: dark) {
@@ -136,10 +187,12 @@
             .ns-item { border-color: #333; }
             .ns-item:hover { background: #2d2d2d; }
             .ns-item a { color: #e0e0e0; }
-            .ns-item.visited { background: #1a1a1a; }
-            .ns-item.visited a { color: #666; }
+            .ns-item.visited { background: #2d1a1a; }
+            .ns-item.visited a { color: #ff6b6b; }
             .ns-empty { color: #666; }
-            .ns-lottery-time { color: #d48806; }
+            .ns-chicken-item { background: #333; color: #aaa; }
+            .post-list a.ns-visited-post,
+            a.post-title.ns-visited-post { color: #ff6b6b !important; }
         }
 
         @media (max-width: 1400px) { .ns-sidebar { display: none; } }
@@ -173,9 +226,9 @@
     };
 
     const markAsVisited = (postId) => {
+        if (!postId) return;
         const visited = getVisitedPosts();
         visited[postId] = Date.now();
-        // 只保留最近30天的记录
         const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
         for (const id in visited) {
             if (visited[id] < cutoff) delete visited[id];
@@ -188,9 +241,28 @@
         return !!visited[postId];
     };
 
+    // ==================== 全站已浏览帖子标红 ====================
+    const markVisitedPostsOnPage = () => {
+        const visited = getVisitedPosts();
+        document.querySelectorAll('a[href*="/post-"]').forEach(link => {
+            const postId = extractPostId(link.getAttribute('href'));
+            if (postId && visited[postId] && !link.classList.contains('ns-visited-post')) {
+                link.classList.add('ns-visited-post');
+            }
+        });
+    };
+
+    // 监控当前浏览的帖子
+    const trackCurrentPost = () => {
+        const postId = extractPostId(location.href);
+        if (postId) {
+            markAsVisited(postId);
+        }
+    };
+
     // ==================== 签到功能 ====================
     const doCheckin = async () => {
-        if (hasCheckedIn()) return;
+        if (hasCheckedIn()) return null;
         try {
             const res = await fetch(CONFIG.API_URL, {
                 method: 'POST',
@@ -202,15 +274,65 @@
             if (data.success) {
                 GM_setValue(CONFIG.STORAGE_KEY, getToday());
                 notify('签到成功', data.message || '获得鸡腿奖励！');
+                // 提取签到获得的鸡腿数
+                const match = data.message?.match(/(\d+)/);
+                return match ? parseInt(match[1]) : 0;
             } else if (data.message?.includes('已完成') || data.message?.includes('已签到')) {
                 GM_setValue(CONFIG.STORAGE_KEY, getToday());
             }
         } catch (e) {
             console.error('[NS助手] 签到异常:', e);
         }
+        return null;
     };
 
-    // ==================== 数据获取（仅标题） ====================
+    // ==================== 鸡腿统计 ====================
+    const getChickenStats = () => {
+        try {
+            const data = GM_getValue(CONFIG.CHICKEN_KEY);
+            if (data && data.date === getToday()) {
+                return data;
+            }
+        } catch {}
+        return { date: getToday(), checkin: 0, post: 0, reply: 0, liked: 0, total: 0 };
+    };
+
+    const updateChickenStats = (type, amount) => {
+        const stats = getChickenStats();
+        stats[type] = (stats[type] || 0) + amount;
+        stats.total = (stats.checkin || 0) + (stats.post || 0) + (stats.reply || 0) + (stats.liked || 0);
+        stats.date = getToday();
+        GM_setValue(CONFIG.CHICKEN_KEY, stats);
+        return stats;
+    };
+
+    const fetchTodayChicken = async () => {
+        // 尝试从用户通知页面获取今日鸡腿数据
+        try {
+            const res = await fetch('https://www.nodeseek.com/notification', { credentials: 'include' });
+            if (!res.ok) return getChickenStats();
+
+            const html = await res.text();
+            const today = getToday();
+            let stats = getChickenStats();
+
+            // 简单解析：查找今天的鸡腿通知
+            const patterns = [
+                { regex: /签到.*?(\d+).*?鸡腿/g, type: 'checkin' },
+                { regex: /发帖.*?(\d+).*?鸡腿/g, type: 'post' },
+                { regex: /回复.*?(\d+).*?鸡腿/g, type: 'reply' },
+                { regex: /点赞.*?(\d+).*?鸡腿|获得.*?(\d+).*?赞/g, type: 'liked' }
+            ];
+
+            // 简化处理：返回缓存的数据
+            return stats;
+        } catch (e) {
+            console.log('[NS助手] 获取鸡腿统计失败:', e.message);
+            return getChickenStats();
+        }
+    };
+
+    // ==================== 数据获取 ====================
     const fetchPageTitles = async (url) => {
         try {
             const res = await fetch(url, { credentials: 'include' });
@@ -246,9 +368,7 @@
         const results = [];
         for (const post of posts) {
             if (results.length >= CONFIG.TRADE_COUNT) break;
-            // 排除版块公告和置顶帖
             if (/版块规定|中介索引|防骗提示|骗子索引/i.test(post.title)) continue;
-            // 排除已完成交易
             if (/已出|已收|已售|sold|closed/i.test(post.title)) continue;
             const isBuy = /收|求|buy|购/i.test(post.title);
             results.push({
@@ -263,129 +383,109 @@
         return results;
     };
 
-    // ==================== 抽奖帖获取（含开奖时间） ====================
+    // ==================== 技术帖获取 ====================
+    const fetchTechPosts = async () => {
+        const posts = await fetchPageTitles(CONFIG.TECH_URL);
+        const results = [];
+        for (const post of posts) {
+            if (results.length >= CONFIG.TECH_COUNT) break;
+            if (/版块规定|公告|置顶/i.test(post.title)) continue;
+            results.push({
+                id: post.id,
+                title: post.title,
+                url: post.url,
+                tag: '技术',
+                visited: isVisited(post.id)
+            });
+        }
+        return results;
+    };
+
+    // ==================== 骗子曝光帖获取 ====================
+    const fetchScamPosts = async () => {
+        const posts = await fetchPageTitles(CONFIG.SCAM_URL);
+        const results = [];
+        for (const post of posts) {
+            if (results.length >= CONFIG.SCAM_COUNT) break;
+            if (/版块规定|公告|置顶/i.test(post.title)) continue;
+            results.push({
+                id: post.id,
+                title: post.title,
+                url: post.url,
+                tag: '曝光',
+                visited: isVisited(post.id)
+            });
+        }
+        return results;
+    };
+
+    // ==================== 抽奖帖获取 ====================
     const extractLotteryTime = (title) => {
         const now = new Date();
         let month = null, day = null, hour = null, minute = '00';
 
-        // 验证日期是否合理
         const isValidDate = (m, d) => {
             const mi = parseInt(m), di = parseInt(d);
             return mi >= 1 && mi <= 12 && di >= 1 && di <= 31;
         };
 
-        // 匹配具体日期时间: 12月20日 20:00 或 12月20日20点
         let match = title.match(/(\d{1,2})月(\d{1,2})[日号]\s*(\d{1,2})[时点:：](\d{2})?/);
         if (match && isValidDate(match[1], match[2])) {
-            month = match[1];
-            day = match[2];
-            hour = match[3];
-            minute = match[4] || '00';
+            month = match[1]; day = match[2]; hour = match[3]; minute = match[4] || '00';
         }
 
-        // 匹配 12/20 20:00 或 12.20 20:00 格式
         if (!month) {
             match = title.match(/(\d{1,2})[\/\-.](\d{1,2})\s*(\d{1,2}):(\d{2})/);
             if (match && isValidDate(match[1], match[2])) {
-                month = match[1];
-                day = match[2];
-                hour = match[3];
-                minute = match[4];
+                month = match[1]; day = match[2]; hour = match[3]; minute = match[4];
             }
         }
 
-        // 匹配仅日期: 12月20日（必须有"月"和"日"）
         if (!month) {
             match = title.match(/(\d{1,2})月(\d{1,2})[日号]/);
             if (match && isValidDate(match[1], match[2])) {
-                month = match[1];
-                day = match[2];
-                // 尝试找时间
+                month = match[1]; day = match[2];
                 const timeMatch = title.match(/(\d{1,2})[时点]|(\d{1,2}):(\d{2})/);
-                if (timeMatch) {
-                    hour = timeMatch[1] || timeMatch[2];
-                    minute = timeMatch[3] || '00';
-                }
+                if (timeMatch) { hour = timeMatch[1] || timeMatch[2]; minute = timeMatch[3] || '00'; }
             }
         }
 
-        // 匹配今天/今晚 + 时间
         if (!month) {
             const todayMatch = title.match(/今[天晚日].*?(\d{1,2})[时点:：](\d{2})?/);
             if (todayMatch) {
-                month = now.getMonth() + 1;
-                day = now.getDate();
-                hour = todayMatch[1];
-                minute = todayMatch[2] || '00';
+                month = now.getMonth() + 1; day = now.getDate();
+                hour = todayMatch[1]; minute = todayMatch[2] || '00';
             }
         }
 
-        // 匹配明天 + 时间
         if (!month) {
             const tomorrowMatch = title.match(/明[天日晚].*?(\d{1,2})[时点:：](\d{2})?/);
             if (tomorrowMatch) {
                 const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-                month = tomorrow.getMonth() + 1;
-                day = tomorrow.getDate();
-                hour = tomorrowMatch[1];
-                minute = tomorrowMatch[2] || '00';
+                month = tomorrow.getMonth() + 1; day = tomorrow.getDate();
+                hour = tomorrowMatch[1]; minute = tomorrowMatch[2] || '00';
             }
         }
 
-        // 匹配后天 + 时间
-        if (!month) {
-            const afterMatch = title.match(/后天.*?(\d{1,2})[时点:：](\d{2})?/);
-            if (afterMatch) {
-                const afterTomorrow = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
-                month = afterTomorrow.getMonth() + 1;
-                day = afterTomorrow.getDate();
-                hour = afterMatch[1];
-                minute = afterMatch[2] || '00';
-            }
-        }
-
-        // 匹配X小时后 (不强制要求"开奖"关键词)
         if (!month) {
             const hoursMatch = title.match(/(\d+)\s*[小时hH]+后?/);
             if (hoursMatch) {
                 const hours = parseInt(hoursMatch[1]);
-                if (hours >= 1 && hours <= 168) {  // 1小时到7天
+                if (hours >= 1 && hours <= 168) {
                     const future = new Date(now.getTime() + hours * 60 * 60 * 1000);
-                    month = future.getMonth() + 1;
-                    day = future.getDate();
-                    hour = future.getHours();
-                    minute = String(future.getMinutes()).padStart(2, '0');
+                    month = future.getMonth() + 1; day = future.getDate();
+                    hour = future.getHours(); minute = String(future.getMinutes()).padStart(2, '0');
                 }
             }
         }
 
-        // 匹配X天后
-        if (!month) {
-            const daysMatch = title.match(/(\d+)\s*天后/);
-            if (daysMatch) {
-                const days = parseInt(daysMatch[1]);
-                if (days >= 1 && days <= 30) {
-                    const future = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-                    month = future.getMonth() + 1;
-                    day = future.getDate();
-                }
-            }
-        }
+        if (month && day && hour) return `${month}月${day}日${hour}:${minute}开奖`;
+        if (month && day) return `${month}月${day}日开奖`;
 
-        // 格式化输出（必须有完整日期）
-        if (month && day && hour) {
-            return `${month}月${day}日${hour}:${minute}开奖`;
-        } else if (month && day) {
-            return `${month}月${day}日开奖`;
-        }
-
-        // 楼层开奖
         const floorMatch = title.match(/(\d+)\s*[楼层](?:\s*(?:开奖|抽奖))?|满\s*(\d+)\s*[楼层]/);
         if (floorMatch) {
             const num = floorMatch[1] || floorMatch[2];
-            if (parseInt(num) >= 20) {  // 楼层数至少20才算
-                return `${num}楼开奖`;
-            }
+            if (parseInt(num) >= 20) return `${num}楼开奖`;
         }
 
         return null;
@@ -399,18 +499,11 @@
             if (results.length >= CONFIG.LOTTERY_COUNT || seen.has(post.id)) continue;
 
             const title = post.title;
-
-            // 严格匹配真实抽奖帖：必须包含"抽奖"或"开奖"关键词
             const isRealLottery = /抽奖|开奖|\b抽\s*\d+|送.{0,5}名|随机抽/.test(title);
             if (!isRealLottery) continue;
-
-            // 排除已结束的
             if (/已开奖|已结束|已完成|开奖结果|中奖名单/i.test(title)) continue;
-
-            // 排除非抽奖内容
             if (/招聘|求职|教程|问题|讨论|分享经验/i.test(title)) continue;
 
-            // 提取开奖时间
             const lotteryTime = extractLotteryTime(title);
 
             seen.add(post.id);
@@ -433,11 +526,7 @@
 
     // ==================== 中奖检测 ====================
     const getParticipatedLotteries = () => {
-        try {
-            return GM_getValue(CONFIG.WIN_CHECK_KEY) || {};
-        } catch {
-            return {};
-        }
+        try { return GM_getValue(CONFIG.WIN_CHECK_KEY) || {}; } catch { return {}; }
     };
 
     const addParticipatedLottery = (postId, title) => {
@@ -451,26 +540,18 @@
     const checkWinStatus = async () => {
         const participated = getParticipatedLotteries();
         const postIds = Object.keys(participated).filter(id => !participated[id].won);
-
         if (postIds.length === 0) return;
 
-        console.log(`[NS助手] 检查 ${postIds.length} 个抽奖帖的中奖状态...`);
-
-        for (const postId of postIds.slice(0, 5)) {  // 每次最多检查5个
+        for (const postId of postIds.slice(0, 3)) {
             try {
-                const res = await fetch(`https://www.nodeseek.com/post-${postId}.html`, {
-                    credentials: 'include'
-                });
+                const res = await fetch(`https://www.nodeseek.com/post-${postId}.html`, { credentials: 'include' });
                 if (!res.ok) continue;
 
                 const html = await res.text();
-
-                // 获取当前用户名
                 const usernameMatch = html.match(/data-username="([^"]+)"/);
                 if (!usernameMatch) continue;
                 const currentUser = usernameMatch[1];
 
-                // 检查是否中奖（在开奖结果中出现用户名）
                 const isEnded = /已开奖|开奖结果|中奖名单|恭喜.*中奖/i.test(html);
                 if (isEnded) {
                     const winPattern = new RegExp(`@${currentUser}|恭喜\\s*${currentUser}|中奖.*${currentUser}|${currentUser}.*中奖`, 'i');
@@ -481,53 +562,28 @@
 
                     if (isWinner) {
                         participated[postId].won = true;
-                        const title = participated[postId].title || '未知抽奖';
-                        notify('🎉 恭喜中奖！', `您在「${truncate(title, 20)}」中奖了！`, () => {
-                            window.open(`https://www.nodeseek.com/post-${postId}.html`, '_blank');
-                        });
+                        notify('🎉 恭喜中奖！', `您在「${truncate(participated[postId].title, 20)}」中奖了！`);
                     }
                 }
-
                 GM_setValue(CONFIG.WIN_CHECK_KEY, participated);
-
-                // 延迟避免请求过快
                 await new Promise(r => setTimeout(r, 1000));
-            } catch (e) {
-                console.log(`[NS助手] 检查帖子 ${postId} 失败:`, e.message);
-            }
+            } catch (e) {}
         }
     };
 
-    // 监控当前页面是否参与抽奖
     const monitorLotteryParticipation = () => {
         const postId = extractPostId(location.href);
         if (!postId) return;
 
-        // 检查页面是否是抽奖帖
         const pageTitle = document.title || '';
-        if (!/抽奖|开奖|福利|免费送/i.test(pageTitle)) return;
+        if (!/抽奖|开奖/i.test(pageTitle)) return;
 
-        // 监控评论提交
-        const observer = new MutationObserver(() => {
-            const hasCommented = document.querySelector('.comment-list .comment-item');
-            if (hasCommented) {
-                addParticipatedLottery(postId, pageTitle.replace(/ - NodeSeek$/, ''));
-                console.log(`[NS助手] 已记录参与抽奖: ${postId}`);
-            }
-        });
-
-        const commentList = document.querySelector('.comment-list, .post-comments, [class*="comment"]');
-        if (commentList) {
-            observer.observe(commentList, { childList: true, subtree: true });
-        }
-
-        // 同时检查是否已经评论过
         setTimeout(() => {
             const currentUser = document.querySelector('[data-username]')?.getAttribute('data-username');
             if (currentUser) {
-                const comments = document.querySelectorAll('.comment-item, [class*="comment"]');
+                const comments = document.querySelectorAll('.comment-item, [class*="reply"]');
                 comments.forEach(comment => {
-                    if (comment.textContent?.includes(currentUser)) {
+                    if (comment.querySelector(`[href*="${currentUser}"]`)) {
                         addParticipatedLottery(postId, pageTitle.replace(/ - NodeSeek$/, ''));
                     }
                 });
@@ -544,6 +600,13 @@
         const sidebar = document.createElement('div');
         sidebar.className = 'ns-sidebar';
         sidebar.innerHTML = `
+            <div class="ns-card chicken">
+                <div class="ns-card-header">
+                    <span>🍗 今日鸡腿</span>
+                    <span class="ns-card-toggle">−</span>
+                </div>
+                <div class="ns-card-body"><div class="ns-empty ns-loading">统计中...</div></div>
+            </div>
             <div class="ns-card trade">
                 <div class="ns-card-header">
                     <span>💰 最新交易</span>
@@ -554,6 +617,20 @@
             <div class="ns-card lottery">
                 <div class="ns-card-header">
                     <span>🎁 最新抽奖</span>
+                    <span class="ns-card-toggle">−</span>
+                </div>
+                <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
+            </div>
+            <div class="ns-card tech">
+                <div class="ns-card-header">
+                    <span>💻 最新技术</span>
+                    <span class="ns-card-toggle">−</span>
+                </div>
+                <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
+            </div>
+            <div class="ns-card scam">
+                <div class="ns-card-header">
+                    <span>⚠️ 骗子曝光</span>
                     <span class="ns-card-toggle">−</span>
                 </div>
                 <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
@@ -575,60 +652,40 @@
         return sidebar;
     };
 
-    const renderTradeCard = (card, items) => {
+    const renderChickenCard = (card, stats) => {
         const body = card.querySelector('.ns-card-body');
-        if (!items?.length) {
-            body.innerHTML = '<div class="ns-empty">暂无交易信息</div>';
-            return;
-        }
-        body.innerHTML = items.map(item => `
-            <div class="ns-item ${item.visited ? 'visited' : ''}" data-post-id="${item.id}">
-                <a href="${escapeHtml(item.url)}" target="_blank" title="${escapeHtml(item.title)}">
-                    <div class="ns-item-row">
-                        <span class="ns-tag ${item.type}">${item.tag}</span>
-                        <span class="ns-title">${escapeHtml(truncate(item.title, 18))}</span>
-                        ${item.visited ? '<span class="ns-visited-mark">✓已看</span>' : ''}
-                    </div>
-                </a>
+        body.innerHTML = `
+            <div class="ns-chicken-stats">
+                <div class="ns-chicken-total">🍗 ${stats.total || 0}</div>
+                <div class="ns-chicken-detail">
+                    <span class="ns-chicken-item">签到 +${stats.checkin || 0}</span>
+                    <span class="ns-chicken-item">发帖 +${stats.post || 0}</span>
+                    <span class="ns-chicken-item">回帖 +${stats.reply || 0}</span>
+                    <span class="ns-chicken-item">被赞 +${stats.liked || 0}</span>
+                </div>
             </div>
-        `).join('');
-
-        // 添加点击事件标记已浏览
-        body.querySelectorAll('.ns-item').forEach(el => {
-            el.addEventListener('click', () => {
-                const postId = el.getAttribute('data-post-id');
-                if (postId) {
-                    markAsVisited(postId);
-                    el.classList.add('visited');
-                    if (!el.querySelector('.ns-visited-mark')) {
-                        el.querySelector('.ns-item-row')?.insertAdjacentHTML('beforeend',
-                            '<span class="ns-visited-mark">✓已看</span>');
-                    }
-                }
-            });
-        });
+        `;
     };
 
-    const renderLotteryCard = (card, items) => {
+    const renderItemCard = (card, items, emptyText) => {
         const body = card.querySelector('.ns-card-body');
         if (!items?.length) {
-            body.innerHTML = '<div class="ns-empty">暂无抽奖信息</div>';
+            body.innerHTML = `<div class="ns-empty">${emptyText}</div>`;
             return;
         }
         body.innerHTML = items.map(item => `
             <div class="ns-item ${item.visited ? 'visited' : ''}" data-post-id="${item.id}">
                 <a href="${escapeHtml(item.url)}" target="_blank" title="${escapeHtml(item.title)}">
                     <div class="ns-item-row">
-                        <span class="ns-tag lottery">${item.tag}</span>
-                        <span class="ns-title">${escapeHtml(truncate(item.title, 18))}</span>
-                        ${item.visited ? '<span class="ns-visited-mark">✓已看</span>' : ''}
+                        <span class="ns-tag ${item.type || item.tag?.toLowerCase()}">${item.tag}</span>
+                        <span class="ns-title">${escapeHtml(truncate(item.title, 16))}</span>
+                        ${item.visited ? '<span class="ns-visited-mark">[已浏览]</span>' : ''}
                     </div>
                     ${item.lotteryTime ? `<div class="ns-lottery-time">⏰ ${escapeHtml(item.lotteryTime)}</div>` : ''}
                 </a>
             </div>
         `).join('');
 
-        // 添加点击事件标记已浏览
         body.querySelectorAll('.ns-item').forEach(el => {
             el.addEventListener('click', () => {
                 const postId = el.getAttribute('data-post-id');
@@ -636,8 +693,7 @@
                     markAsVisited(postId);
                     el.classList.add('visited');
                     if (!el.querySelector('.ns-visited-mark')) {
-                        el.querySelector('.ns-item-row')?.insertAdjacentHTML('beforeend',
-                            '<span class="ns-visited-mark">✓已看</span>');
+                        el.querySelector('.ns-item-row')?.insertAdjacentHTML('beforeend', '<span class="ns-visited-mark">[已浏览]</span>');
                     }
                 }
             });
@@ -645,21 +701,40 @@
     };
 
     const loadSidebarData = async (sidebar) => {
-        const [trades, lotteries] = await Promise.all([
+        const [trades, lotteries, techs, scams, chickenStats] = await Promise.all([
             fetchActiveTrades(),
-            fetchActiveLotteries()
+            fetchActiveLotteries(),
+            fetchTechPosts(),
+            fetchScamPosts(),
+            fetchTodayChicken()
         ]);
 
-        renderTradeCard(sidebar.querySelector('.ns-card.trade'), trades);
-        renderLotteryCard(sidebar.querySelector('.ns-card.lottery'), lotteries);
+        renderChickenCard(sidebar.querySelector('.ns-card.chicken'), chickenStats);
+        renderItemCard(sidebar.querySelector('.ns-card.trade'), trades, '暂无交易');
+        renderItemCard(sidebar.querySelector('.ns-card.lottery'), lotteries, '暂无抽奖');
+        renderItemCard(sidebar.querySelector('.ns-card.tech'), techs, '暂无技术帖');
+        renderItemCard(sidebar.querySelector('.ns-card.scam'), scams, '暂无曝光');
     };
 
     // ==================== 初始化 ====================
-    const init = () => {
-        console.log('[NS助手] v2.0.0 初始化');
+    const init = async () => {
+        console.log('[NS助手] v2.1.0 初始化');
+
+        // 记录当前浏览的帖子
+        trackCurrentPost();
+
+        // 标记页面上已浏览的帖子
+        markVisitedPostsOnPage();
+
+        // 监听DOM变化，持续标记新加载的帖子
+        const observer = new MutationObserver(() => markVisitedPostsOnPage());
+        observer.observe(document.body, { childList: true, subtree: true });
 
         // 自动签到
-        setTimeout(doCheckin, 1500);
+        const checkinReward = await doCheckin();
+        if (checkinReward) {
+            updateChickenStats('checkin', checkinReward);
+        }
 
         // 监控抽奖参与
         monitorLotteryParticipation();
@@ -677,7 +752,7 @@
             setTimeout(async () => {
                 const sidebar = createSidebar();
                 await loadSidebarData(sidebar);
-            }, 800);
+            }, 500);
         }
     };
 
