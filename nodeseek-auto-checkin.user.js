@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      2.0.2
+// @version      2.0.3
 // @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 中奖提醒
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
@@ -265,37 +265,104 @@
 
     // ==================== 抽奖帖获取（含开奖时间） ====================
     const extractLotteryTime = (title) => {
-        // 从标题提取开奖时间
-        const patterns = [
-            // 具体日期时间
-            /(\d{1,2})[月\/\-.](\d{1,2})[日号]?\s*(\d{1,2})[时点:：](\d{0,2})/,  // 12月20日 20:00
-            /(\d{1,2})[\/\-.](\d{1,2})\s+(\d{1,2}):(\d{2})/,  // 12/20 20:00
-            /(\d{1,2})[月\/\-.](\d{1,2})[日号]?/,  // 12月20日
-            // 相对时间
-            /(\d+)\s*[小时hH]+后?/,  // 24小时后、24h后
-            /(\d+)\s*天后/,  // 3天后
-            /(\d+)\s*分钟后/,  // 30分钟后
-            // 时间点
-            /(\d{1,2})[时点]开奖/,  // 20点开奖
-            /(\d{1,2}):(\d{2})\s*开奖/,  // 20:00开奖
-            /今[天晚日].*?(\d{1,2})[时点:：]/,  // 今晚8点
-            /明[天日晚].*?(\d{1,2})[时点:：]/,  // 明天20点
-            /后天.*?(\d{1,2})[时点:：]/,  // 后天20点
-            // 楼层开奖
-            /(\d+)\s*楼开奖/,  // 100楼开奖
-            /(\d+)\s*层开奖/,  // 100层开奖
-            /满\s*(\d+)\s*[楼层]/,  // 满100楼
-            // 评论数开奖
-            /(\d+)\s*评论/,  // 50评论
-            /(\d+)\s*回复/,  // 50回复
-        ];
+        const now = new Date();
+        let month = null, day = null, hour = null, minute = '00';
 
-        for (const pattern of patterns) {
-            const match = title.match(pattern);
-            if (match) {
-                return match[0];
+        // 匹配具体日期时间: 12月20日 20:00 或 12/20 20:00
+        let match = title.match(/(\d{1,2})[月\/\-.](\d{1,2})[日号]?\s*(\d{1,2})[时点:：](\d{2})?/);
+        if (match) {
+            month = match[1];
+            day = match[2];
+            hour = match[3];
+            minute = match[4] || '00';
+        }
+
+        // 匹配日期+时间分开: 12月20日...20点
+        if (!hour) {
+            const dateMatch = title.match(/(\d{1,2})[月\/\-.](\d{1,2})[日号]?/);
+            const timeMatch = title.match(/(\d{1,2})[时点:：](\d{2})?(?:\s*开奖)?/);
+            if (dateMatch) {
+                month = dateMatch[1];
+                day = dateMatch[2];
+            }
+            if (timeMatch) {
+                hour = timeMatch[1];
+                minute = timeMatch[2] || '00';
             }
         }
+
+        // 匹配今天/今晚
+        if (!month && /今[天晚日]/.test(title)) {
+            month = now.getMonth() + 1;
+            day = now.getDate();
+            const timeMatch = title.match(/今[天晚日].*?(\d{1,2})[时点:：](\d{2})?/);
+            if (timeMatch) {
+                hour = timeMatch[1];
+                minute = timeMatch[2] || '00';
+            }
+        }
+
+        // 匹配明天
+        if (!month && /明[天日晚]/.test(title)) {
+            const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            month = tomorrow.getMonth() + 1;
+            day = tomorrow.getDate();
+            const timeMatch = title.match(/明[天日晚].*?(\d{1,2})[时点:：](\d{2})?/);
+            if (timeMatch) {
+                hour = timeMatch[1];
+                minute = timeMatch[2] || '00';
+            }
+        }
+
+        // 匹配后天
+        if (!month && /后天/.test(title)) {
+            const afterTomorrow = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
+            month = afterTomorrow.getMonth() + 1;
+            day = afterTomorrow.getDate();
+            const timeMatch = title.match(/后天.*?(\d{1,2})[时点:：](\d{2})?/);
+            if (timeMatch) {
+                hour = timeMatch[1];
+                minute = timeMatch[2] || '00';
+            }
+        }
+
+        // 匹配X小时后
+        const hoursMatch = title.match(/(\d+)\s*[小时hH]+后?/);
+        if (hoursMatch && !month) {
+            const future = new Date(now.getTime() + parseInt(hoursMatch[1]) * 60 * 60 * 1000);
+            month = future.getMonth() + 1;
+            day = future.getDate();
+            hour = future.getHours();
+            minute = String(future.getMinutes()).padStart(2, '0');
+        }
+
+        // 匹配X天后
+        const daysMatch = title.match(/(\d+)\s*天后/);
+        if (daysMatch && !month) {
+            const future = new Date(now.getTime() + parseInt(daysMatch[1]) * 24 * 60 * 60 * 1000);
+            month = future.getMonth() + 1;
+            day = future.getDate();
+        }
+
+        // 格式化输出
+        if (month && day && hour) {
+            return `${month}月${day}日${hour}:${minute}开奖`;
+        } else if (month && day) {
+            return `${month}月${day}日开奖`;
+        }
+
+        // 楼层/评论开奖
+        const floorMatch = title.match(/(\d+)\s*[楼层]开奖|满\s*(\d+)\s*[楼层]/);
+        if (floorMatch) {
+            const num = floorMatch[1] || floorMatch[2];
+            return `${num}楼开奖`;
+        }
+
+        const replyMatch = title.match(/(\d+)\s*(?:评论|回复)/);
+        if (replyMatch) {
+            return `${replyMatch[1]}评论开奖`;
+        }
+
         return null;
     };
 
