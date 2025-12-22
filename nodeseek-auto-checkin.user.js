@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      2.1.1
-// @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 技术帖 + 骗子曝光 + 鸡腿统计
+// @version      2.2.0
+// @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 全站骗子曝光
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
 // @icon         https://www.nodeseek.com/favicon.ico
@@ -21,17 +21,14 @@
     const CONFIG = {
         API_URL: 'https://www.nodeseek.com/api/attendance',
         TRADE_URL: 'https://www.nodeseek.com/categories/trade',
-        TECH_URL: 'https://www.nodeseek.com/categories/technical',
         SCAM_URL: 'https://www.nodeseek.com/categories/scam',
         HOME_URL: 'https://www.nodeseek.com/',
         STORAGE_KEY: 'ns_last_checkin',
         VISITED_KEY: 'ns_visited_posts',
         WIN_CHECK_KEY: 'ns_win_check',
-        CHICKEN_KEY: 'ns_chicken_today',
         RANDOM_MODE: true,
         TRADE_COUNT: 5,
         LOTTERY_COUNT: 5,
-        TECH_COUNT: 5,
         SCAM_COUNT: 5,
         WIN_CHECK_INTERVAL: 10 * 60 * 1000
     };
@@ -93,10 +90,8 @@
         .ns-card-toggle { opacity: 0.7; font-size: 10px; }
         .ns-card.collapsed .ns-card-body { display: none; }
 
-        .ns-card.chicken .ns-card-header { background: linear-gradient(135deg, #ffd93d 0%, #ff6b6b 100%); color: #fff; }
         .ns-card.trade .ns-card-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
         .ns-card.lottery .ns-card-header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #fff; }
-        .ns-card.tech .ns-card-header { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: #fff; }
         .ns-card.scam .ns-card-header { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: #fff; }
 
         .ns-item {
@@ -139,7 +134,6 @@
         .ns-tag.sell { background: #ff7875; }
         .ns-tag.buy { background: #40a9ff; }
         .ns-tag.lottery { background: #73d13d; }
-        .ns-tag.tech { background: #36cfc9; }
         .ns-tag.scam { background: #ff4d4f; }
 
         .ns-title {
@@ -155,30 +149,6 @@
             padding-left: 24px;
         }
 
-        /* 鸡腿统计样式 */
-        .ns-chicken-stats {
-            padding: 8px 10px;
-        }
-        .ns-chicken-total {
-            font-size: 18px;
-            font-weight: 700;
-            color: #fa8c16;
-            text-align: center;
-            margin-bottom: 6px;
-        }
-        .ns-chicken-detail {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 4px;
-            font-size: 10px;
-            color: #666;
-        }
-        .ns-chicken-item {
-            background: #f5f5f5;
-            padding: 2px 6px;
-            border-radius: 3px;
-        }
-
         .ns-empty { text-align: center; padding: 10px; color: #999; font-size: 11px; }
         .ns-loading { color: #1890ff; }
 
@@ -190,7 +160,6 @@
             .ns-item.visited { background: #2d1a1a; }
             .ns-item.visited a { color: #ff6b6b; }
             .ns-empty { color: #666; }
-            .ns-chicken-item { background: #333; color: #aaa; }
             .post-list a.ns-visited-post,
             a.post-title.ns-visited-post { color: #ff6b6b !important; }
         }
@@ -286,131 +255,6 @@
         return null;
     };
 
-    // ==================== 鸡腿统计 ====================
-    const getChickenStats = () => {
-        try {
-            const data = GM_getValue(CONFIG.CHICKEN_KEY);
-            if (data && data.date === getToday()) {
-                return data;
-            }
-        } catch {}
-        return { date: getToday(), checkin: 0, total: 0, currentTotal: 0 };
-    };
-
-    const saveChickenStats = (stats) => {
-        stats.date = getToday();
-        GM_setValue(CONFIG.CHICKEN_KEY, stats);
-    };
-
-    const updateChickenStats = (type, amount) => {
-        if (!amount || amount <= 0) return;
-        const stats = getChickenStats();
-        stats[type] = (stats[type] || 0) + amount;
-        stats.total = (stats.total || 0) + amount;
-        saveChickenStats(stats);
-    };
-
-    const fetchTodayChicken = async () => {
-        let stats = getChickenStats();
-
-        try {
-            // 方法1: 从页面头部用户菜单获取鸡腿数
-            // NodeSeek 通常在用户下拉菜单或头部显示积分
-            const selectors = [
-                '.header-user-info .credit',
-                '.user-credit',
-                '.nsk-credit',
-                '[class*="credit"]',
-                '.user-menu .credit',
-                '.dropdown-menu .credit',
-                'a[href*="/space/"] + *',
-                '.navbar .user-info span'
-            ];
-
-            for (const sel of selectors) {
-                const el = document.querySelector(sel);
-                if (el) {
-                    const text = el.textContent || '';
-                    const match = text.match(/(\d+)/);
-                    if (match && parseInt(match[1]) > 0) {
-                        stats.currentTotal = parseInt(match[1]);
-                        break;
-                    }
-                }
-            }
-
-            // 方法2: 查找包含"鸡腿"文字的元素
-            if (!stats.currentTotal) {
-                document.querySelectorAll('span, div, a').forEach(el => {
-                    if (stats.currentTotal) return;
-                    const text = el.textContent || '';
-                    if (text.includes('鸡腿') || text.includes('积分')) {
-                        const match = text.match(/(\d+)/);
-                        if (match && parseInt(match[1]) > 0) {
-                            stats.currentTotal = parseInt(match[1]);
-                        }
-                    }
-                });
-            }
-
-            // 方法3: 从个人空间页面获取
-            if (!stats.currentTotal) {
-                const userLink = document.querySelector('a[href*="/space/"]');
-                if (userLink) {
-                    const spaceUrl = userLink.getAttribute('href');
-                    const fullUrl = spaceUrl.startsWith('http') ? spaceUrl : `https://www.nodeseek.com${spaceUrl}`;
-                    try {
-                        const res = await fetch(fullUrl, { credentials: 'include' });
-                        if (res.ok) {
-                            const html = await res.text();
-                            // 多种匹配模式
-                            const patterns = [
-                                /鸡腿[：:\s]*(\d+)/,
-                                /(\d+)\s*鸡腿/,
-                                /积分[：:\s]*(\d+)/,
-                                /(\d+)\s*积分/,
-                                /credit[：:\s]*(\d+)/i
-                            ];
-                            for (const pattern of patterns) {
-                                const match = html.match(pattern);
-                                if (match) {
-                                    stats.currentTotal = parseInt(match[1]);
-                                    break;
-                                }
-                            }
-                        }
-                    } catch (e) {
-                        console.log('[NS助手] 获取用户空间失败:', e.message);
-                    }
-                }
-            }
-
-            // 记录今日起始值并计算变化
-            const startKey = 'ns_chicken_start';
-            const startData = GM_getValue(startKey);
-
-            if (startData && startData.date === getToday()) {
-                // 今天已有起始值
-                if (stats.currentTotal > 0 && startData.start > 0) {
-                    const change = stats.currentTotal - startData.start;
-                    // 总变化 = 当前 - 起始值（不含签到）+ 签到奖励
-                    stats.todayChange = change + (stats.checkin || 0);
-                }
-            } else if (stats.currentTotal > 0) {
-                // 新的一天，记录起始值（减去今天已获得的签到奖励）
-                const startValue = stats.currentTotal - (stats.checkin || 0);
-                GM_setValue(startKey, { date: getToday(), start: startValue });
-                stats.todayChange = stats.checkin || 0;
-            }
-
-            saveChickenStats(stats);
-        } catch (e) {
-            console.log('[NS助手] 获取鸡腿统计失败:', e.message);
-        }
-
-        return stats;
-    };
-
     // ==================== 数据获取 ====================
     const fetchPageTitles = async (url) => {
         try {
@@ -462,31 +306,18 @@
         return results;
     };
 
-    // ==================== 技术帖获取 ====================
-    const fetchTechPosts = async () => {
-        const posts = await fetchPageTitles(CONFIG.TECH_URL);
-        const results = [];
-        for (const post of posts) {
-            if (results.length >= CONFIG.TECH_COUNT) break;
-            if (/版块规定|公告|置顶/i.test(post.title)) continue;
-            results.push({
-                id: post.id,
-                title: post.title,
-                url: post.url,
-                tag: '技术',
-                visited: isVisited(post.id)
-            });
-        }
-        return results;
-    };
-
-    // ==================== 骗子曝光帖获取 ====================
+    // ==================== 骗子曝光帖获取（全站索引） ====================
     const fetchScamPosts = async () => {
-        const posts = await fetchPageTitles(CONFIG.SCAM_URL);
         const results = [];
-        for (const post of posts) {
+        const seen = new Set();
+
+        // 从骗子曝光版块获取
+        const scamPosts = await fetchPageTitles(CONFIG.SCAM_URL);
+        for (const post of scamPosts) {
             if (results.length >= CONFIG.SCAM_COUNT) break;
             if (/版块规定|公告|置顶/i.test(post.title)) continue;
+            if (seen.has(post.id)) continue;
+            seen.add(post.id);
             results.push({
                 id: post.id,
                 title: post.title,
@@ -495,6 +326,27 @@
                 visited: isVisited(post.id)
             });
         }
+
+        // 从全站首页索引骗子相关帖子
+        if (results.length < CONFIG.SCAM_COUNT) {
+            const homePosts = await fetchPageTitles(CONFIG.HOME_URL);
+            for (const post of homePosts) {
+                if (results.length >= CONFIG.SCAM_COUNT) break;
+                if (seen.has(post.id)) continue;
+                // 匹配骗子相关关键词
+                if (!/骗子|骗局|诈骗|曝光|跑路|维权|被骗|警惕|小心|避坑|黑名单/i.test(post.title)) continue;
+                if (/版块规定|公告|置顶/i.test(post.title)) continue;
+                seen.add(post.id);
+                results.push({
+                    id: post.id,
+                    title: post.title,
+                    url: post.url,
+                    tag: '曝光',
+                    visited: isVisited(post.id)
+                });
+            }
+        }
+
         return results;
     };
 
@@ -679,13 +531,6 @@
         const sidebar = document.createElement('div');
         sidebar.className = 'ns-sidebar';
         sidebar.innerHTML = `
-            <div class="ns-card chicken">
-                <div class="ns-card-header">
-                    <span>🍗 今日鸡腿</span>
-                    <span class="ns-card-toggle">−</span>
-                </div>
-                <div class="ns-card-body"><div class="ns-empty ns-loading">统计中...</div></div>
-            </div>
             <div class="ns-card trade">
                 <div class="ns-card-header">
                     <span>💰 最新交易</span>
@@ -696,13 +541,6 @@
             <div class="ns-card lottery">
                 <div class="ns-card-header">
                     <span>🎁 最新抽奖</span>
-                    <span class="ns-card-toggle">−</span>
-                </div>
-                <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
-            </div>
-            <div class="ns-card tech">
-                <div class="ns-card-header">
-                    <span>💻 最新技术</span>
                     <span class="ns-card-toggle">−</span>
                 </div>
                 <div class="ns-card-body"><div class="ns-empty ns-loading">加载中...</div></div>
@@ -729,31 +567,6 @@
 
         sidebarInstance = sidebar;
         return sidebar;
-    };
-
-    const renderChickenCard = (card, stats) => {
-        const body = card.querySelector('.ns-card-body');
-        const hasTotal = stats.currentTotal > 0;
-        const todayChange = stats.todayChange || stats.checkin || 0;
-
-        body.innerHTML = `
-            <div class="ns-chicken-stats">
-                ${hasTotal ? `
-                    <div class="ns-chicken-total">🍗 ${stats.currentTotal}</div>
-                    <div class="ns-chicken-detail">
-                        <span class="ns-chicken-item">今日 +${todayChange}</span>
-                        ${stats.checkin ? `<span class="ns-chicken-item">签到 +${stats.checkin}</span>` : ''}
-                        ${todayChange > stats.checkin ? `<span class="ns-chicken-item">其他 +${todayChange - (stats.checkin || 0)}</span>` : ''}
-                    </div>
-                ` : `
-                    <div class="ns-chicken-total">🍗 +${stats.checkin || 0}</div>
-                    <div class="ns-chicken-detail">
-                        <span class="ns-chicken-item">今日签到 +${stats.checkin || 0}</span>
-                        <span class="ns-chicken-item" style="color:#999">总数获取中...</span>
-                    </div>
-                `}
-            </div>
-        `;
     };
 
     const renderItemCard = (card, items, emptyText) => {
@@ -790,24 +603,20 @@
     };
 
     const loadSidebarData = async (sidebar) => {
-        const [trades, lotteries, techs, scams, chickenStats] = await Promise.all([
+        const [trades, lotteries, scams] = await Promise.all([
             fetchActiveTrades(),
             fetchActiveLotteries(),
-            fetchTechPosts(),
-            fetchScamPosts(),
-            fetchTodayChicken()
+            fetchScamPosts()
         ]);
 
-        renderChickenCard(sidebar.querySelector('.ns-card.chicken'), chickenStats);
         renderItemCard(sidebar.querySelector('.ns-card.trade'), trades, '暂无交易');
         renderItemCard(sidebar.querySelector('.ns-card.lottery'), lotteries, '暂无抽奖');
-        renderItemCard(sidebar.querySelector('.ns-card.tech'), techs, '暂无技术帖');
         renderItemCard(sidebar.querySelector('.ns-card.scam'), scams, '暂无曝光');
     };
 
     // ==================== 初始化 ====================
     const init = async () => {
-        console.log('[NS助手] v2.1.1 初始化');
+        console.log('[NS助手] v2.2.0 初始化');
 
         // 记录当前浏览的帖子
         trackCurrentPost();
@@ -820,10 +629,7 @@
         observer.observe(document.body, { childList: true, subtree: true });
 
         // 自动签到
-        const checkinReward = await doCheckin();
-        if (checkinReward) {
-            updateChickenStats('checkin', checkinReward);
-        }
+        await doCheckin();
 
         // 监控抽奖参与
         monitorLotteryParticipation();
