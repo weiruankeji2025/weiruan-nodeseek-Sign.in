@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      2.3.0
+// @version      2.4.0
 // @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 关键字监控 + 自动翻页
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
@@ -113,6 +113,7 @@
         .ns-card.scam .ns-card-header { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: #fff; }
         .ns-card.keyword .ns-card-header { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: #fff; }
         .ns-card.autopage .ns-card-header { background: linear-gradient(135deg, #4776E6 0%, #8E54E9 100%); color: #fff; }
+        .ns-card.settings .ns-card-header { background: linear-gradient(135deg, #636e72 0%, #2d3436 100%); color: #fff; }
 
         .ns-item {
             padding: 5px 10px;
@@ -214,6 +215,55 @@
         }
         .ns-keyword-match a { font-weight: 500; }
 
+        /* 设置面板 */
+        .ns-settings-panel {
+            padding: 8px 10px;
+        }
+        .ns-settings-group {
+            margin-bottom: 8px;
+        }
+        .ns-settings-label {
+            font-size: 10px;
+            color: #666;
+            margin-bottom: 3px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .ns-settings-label .ns-tag {
+            font-size: 8px;
+            padding: 0 3px;
+        }
+        .ns-settings-input {
+            width: 100%;
+            padding: 4px 6px;
+            font-size: 10px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            box-sizing: border-box;
+        }
+        .ns-settings-input:focus {
+            outline: none;
+            border-color: #1890ff;
+        }
+        .ns-settings-hint {
+            font-size: 9px;
+            color: #999;
+            margin-top: 2px;
+        }
+        .ns-settings-btn {
+            width: 100%;
+            padding: 5px;
+            font-size: 10px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            color: #fff;
+            background: #52c41a;
+            margin-top: 6px;
+        }
+        .ns-settings-btn:hover { opacity: 0.9; }
+
         @media (prefers-color-scheme: dark) {
             .ns-card { background: #242424; box-shadow: 0 1px 6px rgba(0,0,0,0.3); }
             .ns-item { border-color: #333; }
@@ -222,12 +272,39 @@
             .ns-item.visited { background: #2d1a1a; }
             .ns-item.visited a { color: #ff6b6b; }
             .ns-empty { color: #666; }
+            .ns-settings-input { background: #333; border-color: #444; color: #e0e0e0; }
+            .ns-settings-label { color: #aaa; }
+            .ns-settings-hint { color: #666; }
             .post-list a.ns-visited-post,
             a.post-title.ns-visited-post { color: #ff6b6b !important; }
         }
 
         @media (max-width: 1400px) { .ns-sidebar { display: none; } }
     `);
+
+    // ==================== 关键字存储管理 ====================
+    const getKeywords = () => {
+        try {
+            const saved = GM_getValue(CONFIG.KEYWORD_KEY);
+            if (saved) return saved;
+        } catch {}
+        return {
+            exact: CONFIG.KEYWORDS_EXACT,
+            fuzzy: CONFIG.KEYWORDS_FUZZY
+        };
+    };
+
+    const saveKeywords = (exact, fuzzy) => {
+        GM_setValue(CONFIG.KEYWORD_KEY, { exact, fuzzy });
+    };
+
+    const getCurrentKeywords = () => {
+        const saved = getKeywords();
+        return {
+            exact: saved.exact || [],
+            fuzzy: saved.fuzzy || []
+        };
+    };
 
     // ==================== 工具函数 ====================
     const getToday = () => new Date().toISOString().slice(0, 10);
@@ -631,6 +708,9 @@
     const fetchKeywordMatches = async () => {
         if (!CONFIG.KEYWORD_MONITOR_ENABLED) return [];
 
+        const keywords = getCurrentKeywords();
+        if (keywords.exact.length === 0 && keywords.fuzzy.length === 0) return [];
+
         const posts = await fetchPageTitles(CONFIG.HOME_URL);
         const results = [];
         const seen = new Set();
@@ -639,7 +719,7 @@
             if (seen.has(post.id)) continue;
 
             // 检查精准匹配
-            const exactMatch = matchExact(post.title, CONFIG.KEYWORDS_EXACT);
+            const exactMatch = matchExact(post.title, keywords.exact);
             if (exactMatch) {
                 seen.add(post.id);
                 results.push({
@@ -656,7 +736,7 @@
             }
 
             // 检查模糊匹配
-            const fuzzyMatch = matchFuzzy(post.title, CONFIG.KEYWORDS_FUZZY);
+            const fuzzyMatch = matchFuzzy(post.title, keywords.fuzzy);
             if (fuzzyMatch) {
                 seen.add(post.id);
                 results.push({
@@ -798,6 +878,7 @@
 
         const sidebar = document.createElement('div');
         sidebar.className = 'ns-sidebar';
+        const keywords = getCurrentKeywords();
         sidebar.innerHTML = `
             <div class="ns-card autopage">
                 <div class="ns-card-header">
@@ -815,6 +896,35 @@
                             </div>
                         </div>
                         <div class="ns-autopage-info">间隔: ${CONFIG.AUTO_PAGE_INTERVAL}秒</div>
+                    </div>
+                </div>
+            </div>
+            <div class="ns-card settings collapsed">
+                <div class="ns-card-header">
+                    <span>⚙️ 关键字设置</span>
+                    <span class="ns-card-toggle">+</span>
+                </div>
+                <div class="ns-card-body">
+                    <div class="ns-settings-panel">
+                        <div class="ns-settings-group">
+                            <div class="ns-settings-label">
+                                <span class="ns-tag exact">精准</span> 精准匹配
+                            </div>
+                            <input type="text" class="ns-settings-input" id="ns-keywords-exact"
+                                   value="${escapeHtml(keywords.exact.join(', '))}"
+                                   placeholder="VPS, CN2, GIA">
+                            <div class="ns-settings-hint">完全匹配关键词</div>
+                        </div>
+                        <div class="ns-settings-group">
+                            <div class="ns-settings-label">
+                                <span class="ns-tag fuzzy">模糊</span> 模糊匹配
+                            </div>
+                            <input type="text" class="ns-settings-input" id="ns-keywords-fuzzy"
+                                   value="${escapeHtml(keywords.fuzzy.join(', '))}"
+                                   placeholder="优惠, 特价, 免费">
+                            <div class="ns-settings-hint">标题包含即匹配</div>
+                        </div>
+                        <button class="ns-settings-btn" id="ns-save-keywords">保存设置</button>
                     </div>
                 </div>
             </div>
@@ -873,6 +983,39 @@
             goToNextPage();
         });
 
+        // 保存关键字设置
+        sidebar.querySelector('#ns-save-keywords')?.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const exactInput = document.getElementById('ns-keywords-exact');
+            const fuzzyInput = document.getElementById('ns-keywords-fuzzy');
+
+            const parseKeywords = (str) => {
+                return str.split(/[,，]/).map(s => s.trim()).filter(s => s.length > 0);
+            };
+
+            const exact = parseKeywords(exactInput?.value || '');
+            const fuzzy = parseKeywords(fuzzyInput?.value || '');
+
+            saveKeywords(exact, fuzzy);
+
+            // 更新按钮状态
+            const btn = e.target;
+            btn.textContent = '已保存 ✓';
+            btn.style.background = '#1890ff';
+
+            // 刷新关键字监控卡片
+            const keywordCard = sidebar.querySelector('.ns-card.keyword');
+            if (keywordCard) {
+                const matches = await fetchKeywordMatches();
+                renderKeywordCard(keywordCard, matches);
+            }
+
+            setTimeout(() => {
+                btn.textContent = '保存设置';
+                btn.style.background = '#52c41a';
+            }, 1500);
+        });
+
         sidebarInstance = sidebar;
         return sidebar;
     };
@@ -881,7 +1024,8 @@
     const renderKeywordCard = (card, items) => {
         const body = card.querySelector('.ns-card-body');
         if (!items?.length) {
-            const keywords = [...CONFIG.KEYWORDS_EXACT, ...CONFIG.KEYWORDS_FUZZY].join(', ');
+            const kw = getCurrentKeywords();
+            const keywords = [...kw.exact, ...kw.fuzzy].join(', ');
             body.innerHTML = `<div class="ns-empty">暂无匹配<br><span style="font-size:9px;color:#bbb">监控: ${truncate(keywords, 20)}</span></div>`;
             return;
         }
@@ -957,7 +1101,7 @@
 
     // ==================== 初始化 ====================
     const init = async () => {
-        console.log('[NS助手] v2.3.0 初始化');
+        console.log('[NS助手] v2.4.0 初始化');
 
         // 记录当前浏览的帖子
         trackCurrentPost();
@@ -982,22 +1126,16 @@
         // 启动关键字监控
         startKeywordMonitor();
 
-        // 列表页显示侧边栏
-        const isListPage = location.pathname === '/' ||
-            location.pathname.startsWith('/board') ||
-            location.pathname.startsWith('/categor');
+        // 所有页面显示侧边栏
+        setTimeout(async () => {
+            const sidebar = createSidebar();
+            await loadSidebarData(sidebar);
 
-        if (isListPage) {
-            setTimeout(async () => {
-                const sidebar = createSidebar();
-                await loadSidebarData(sidebar);
-
-                // 如果配置了自动翻页，则启动
-                if (CONFIG.AUTO_PAGE_ENABLED) {
-                    startAutoPage();
-                }
-            }, 500);
-        }
+            // 如果配置了自动翻页，则启动
+            if (CONFIG.AUTO_PAGE_ENABLED) {
+                startAutoPage();
+            }
+        }, 500);
     };
 
     if (document.readyState === 'loading') {
