@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      2.2.0
-// @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 全站骗子曝光
+// @version      2.3.0
+// @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 关键字监控 + 自动翻页
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
 // @icon         https://www.nodeseek.com/favicon.ico
@@ -26,11 +26,29 @@
         STORAGE_KEY: 'ns_last_checkin',
         VISITED_KEY: 'ns_visited_posts',
         WIN_CHECK_KEY: 'ns_win_check',
+        KEYWORD_KEY: 'ns_keywords',
+        KEYWORD_NOTIFIED_KEY: 'ns_keyword_notified',
         RANDOM_MODE: true,
         TRADE_COUNT: 5,
         LOTTERY_COUNT: 5,
         SCAM_COUNT: 5,
-        WIN_CHECK_INTERVAL: 10 * 60 * 1000
+        WIN_CHECK_INTERVAL: 10 * 60 * 1000,
+
+        // ========== 关键字监控配置 ==========
+        // 精准匹配关键字（完全匹配标题中的词）
+        KEYWORDS_EXACT: ['VPS', 'CN2', 'GIA'],
+        // 模糊匹配关键字（标题包含即匹配）
+        KEYWORDS_FUZZY: ['优惠', '特价', '免费', '白嫖', '羊毛'],
+        // 监控间隔（毫秒）
+        KEYWORD_MONITOR_INTERVAL: 30 * 1000,
+        // 是否启用关键字监控
+        KEYWORD_MONITOR_ENABLED: true,
+
+        // ========== 自动翻页配置 ==========
+        // 是否启用自动翻页
+        AUTO_PAGE_ENABLED: false,
+        // 翻页间隔（秒）
+        AUTO_PAGE_INTERVAL: 60
     };
 
     // ==================== 样式注入 ====================
@@ -93,6 +111,8 @@
         .ns-card.trade .ns-card-header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; }
         .ns-card.lottery .ns-card-header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: #fff; }
         .ns-card.scam .ns-card-header { background: linear-gradient(135deg, #fa709a 0%, #fee140 100%); color: #fff; }
+        .ns-card.keyword .ns-card-header { background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: #fff; }
+        .ns-card.autopage .ns-card-header { background: linear-gradient(135deg, #4776E6 0%, #8E54E9 100%); color: #fff; }
 
         .ns-item {
             padding: 5px 10px;
@@ -135,6 +155,8 @@
         .ns-tag.buy { background: #40a9ff; }
         .ns-tag.lottery { background: #73d13d; }
         .ns-tag.scam { background: #ff4d4f; }
+        .ns-tag.exact { background: #52c41a; }
+        .ns-tag.fuzzy { background: #13c2c2; }
 
         .ns-title {
             flex: 1;
@@ -151,6 +173,46 @@
 
         .ns-empty { text-align: center; padding: 10px; color: #999; font-size: 11px; }
         .ns-loading { color: #1890ff; }
+
+        /* 自动翻页控制面板 */
+        .ns-autopage-panel {
+            padding: 8px 10px;
+        }
+        .ns-autopage-status {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+        .ns-autopage-timer {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1890ff;
+        }
+        .ns-autopage-btn {
+            padding: 3px 8px;
+            font-size: 10px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            color: #fff;
+            transition: opacity 0.2s;
+        }
+        .ns-autopage-btn:hover { opacity: 0.8; }
+        .ns-autopage-btn.start { background: #52c41a; }
+        .ns-autopage-btn.stop { background: #ff4d4f; }
+        .ns-autopage-btn.next { background: #1890ff; }
+        .ns-autopage-info {
+            font-size: 10px;
+            color: #999;
+        }
+
+        /* 关键字匹配高亮 */
+        .ns-keyword-match {
+            background: linear-gradient(120deg, #84fab0 0%, #8fd3f4 100%);
+            border-left: 3px solid #52c41a;
+        }
+        .ns-keyword-match a { font-weight: 500; }
 
         @media (prefers-color-scheme: dark) {
             .ns-card { background: #242424; box-shadow: 0 1px 6px rgba(0,0,0,0.3); }
@@ -522,6 +584,212 @@
         }, 2000);
     };
 
+    // ==================== 关键字监控 ====================
+    const getNotifiedPosts = () => {
+        try {
+            const data = GM_getValue(CONFIG.KEYWORD_NOTIFIED_KEY);
+            if (data && data.date === getToday()) return data.posts || {};
+            return {};
+        } catch { return {}; }
+    };
+
+    const markPostNotified = (postId) => {
+        const notified = getNotifiedPosts();
+        notified[postId] = Date.now();
+        GM_setValue(CONFIG.KEYWORD_NOTIFIED_KEY, { date: getToday(), posts: notified });
+    };
+
+    const isPostNotified = (postId) => {
+        return !!getNotifiedPosts()[postId];
+    };
+
+    // 精准匹配：标题中包含完整的关键词（作为独立词或中文词）
+    const matchExact = (title, keywords) => {
+        const titleLower = title.toLowerCase();
+        for (const kw of keywords) {
+            const kwLower = kw.toLowerCase();
+            // 对于英文，检查单词边界；对于中文，直接匹配
+            const regex = new RegExp(`(^|[\\s,.!?;:'"()\\[\\]{}])${kwLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[\\s,.!?;:'"()\\[\\]{}])`, 'i');
+            if (regex.test(titleLower) || titleLower.includes(kwLower)) {
+                return kw;
+            }
+        }
+        return null;
+    };
+
+    // 模糊匹配：标题包含关键词即可
+    const matchFuzzy = (title, keywords) => {
+        const titleLower = title.toLowerCase();
+        for (const kw of keywords) {
+            if (titleLower.includes(kw.toLowerCase())) {
+                return kw;
+            }
+        }
+        return null;
+    };
+
+    const fetchKeywordMatches = async () => {
+        if (!CONFIG.KEYWORD_MONITOR_ENABLED) return [];
+
+        const posts = await fetchPageTitles(CONFIG.HOME_URL);
+        const results = [];
+        const seen = new Set();
+
+        for (const post of posts) {
+            if (seen.has(post.id)) continue;
+
+            // 检查精准匹配
+            const exactMatch = matchExact(post.title, CONFIG.KEYWORDS_EXACT);
+            if (exactMatch) {
+                seen.add(post.id);
+                results.push({
+                    id: post.id,
+                    title: post.title,
+                    url: post.url,
+                    matchType: 'exact',
+                    keyword: exactMatch,
+                    tag: `精准:${exactMatch}`,
+                    visited: isVisited(post.id),
+                    notified: isPostNotified(post.id)
+                });
+                continue;
+            }
+
+            // 检查模糊匹配
+            const fuzzyMatch = matchFuzzy(post.title, CONFIG.KEYWORDS_FUZZY);
+            if (fuzzyMatch) {
+                seen.add(post.id);
+                results.push({
+                    id: post.id,
+                    title: post.title,
+                    url: post.url,
+                    matchType: 'fuzzy',
+                    keyword: fuzzyMatch,
+                    tag: `模糊:${fuzzyMatch}`,
+                    visited: isVisited(post.id),
+                    notified: isPostNotified(post.id)
+                });
+            }
+        }
+
+        return results;
+    };
+
+    // 关键字监控定时任务
+    let keywordMonitorTimer = null;
+    const startKeywordMonitor = () => {
+        if (!CONFIG.KEYWORD_MONITOR_ENABLED || keywordMonitorTimer) return;
+
+        const checkKeywords = async () => {
+            try {
+                const matches = await fetchKeywordMatches();
+                const newMatches = matches.filter(m => !m.notified);
+
+                if (newMatches.length > 0) {
+                    // 发送通知
+                    for (const match of newMatches.slice(0, 3)) {
+                        notify(
+                            `🔍 关键字匹配: ${match.keyword}`,
+                            truncate(match.title, 30),
+                            () => window.open(match.url, '_blank')
+                        );
+                        markPostNotified(match.id);
+                    }
+
+                    // 更新侧边栏
+                    if (sidebarInstance) {
+                        const keywordCard = sidebarInstance.querySelector('.ns-card.keyword');
+                        if (keywordCard) {
+                            const allMatches = await fetchKeywordMatches();
+                            renderKeywordCard(keywordCard, allMatches);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log('[NS助手] 关键字监控异常:', e.message);
+            }
+        };
+
+        // 首次检查
+        setTimeout(checkKeywords, 3000);
+        // 定时检查
+        keywordMonitorTimer = setInterval(checkKeywords, CONFIG.KEYWORD_MONITOR_INTERVAL);
+    };
+
+    // ==================== 自动翻页 ====================
+    let autoPageTimer = null;
+    let autoPageCountdown = 0;
+    let autoPageRunning = false;
+
+    const getNextPageUrl = () => {
+        // 查找下一页按钮
+        const nextBtn = document.querySelector('a.next, a[rel="next"], .pagination a:last-child, [class*="next"]');
+        if (nextBtn && nextBtn.href) return nextBtn.href;
+
+        // 尝试解析当前页码并构建下一页URL
+        const currentUrl = location.href;
+        const pageMatch = currentUrl.match(/[?&]page=(\d+)/);
+        if (pageMatch) {
+            const currentPage = parseInt(pageMatch[1]);
+            return currentUrl.replace(/([?&]page=)\d+/, `$1${currentPage + 1}`);
+        }
+
+        // 如果URL中没有page参数，尝试添加
+        if (currentUrl.includes('?')) {
+            return currentUrl + '&page=2';
+        } else {
+            return currentUrl + '?page=2';
+        }
+    };
+
+    const goToNextPage = () => {
+        const nextUrl = getNextPageUrl();
+        if (nextUrl) {
+            location.href = nextUrl;
+        }
+    };
+
+    const updateAutoPageUI = () => {
+        const timerEl = document.querySelector('.ns-autopage-timer');
+        const startBtn = document.querySelector('.ns-autopage-btn.start');
+        const stopBtn = document.querySelector('.ns-autopage-btn.stop');
+
+        if (timerEl) {
+            timerEl.textContent = autoPageRunning ? `${autoPageCountdown}s` : '已停止';
+            timerEl.style.color = autoPageRunning ? '#1890ff' : '#999';
+        }
+        if (startBtn) startBtn.style.display = autoPageRunning ? 'none' : 'inline-block';
+        if (stopBtn) stopBtn.style.display = autoPageRunning ? 'inline-block' : 'none';
+    };
+
+    const startAutoPage = () => {
+        if (autoPageRunning) return;
+        autoPageRunning = true;
+        autoPageCountdown = CONFIG.AUTO_PAGE_INTERVAL;
+
+        autoPageTimer = setInterval(() => {
+            autoPageCountdown--;
+            updateAutoPageUI();
+
+            if (autoPageCountdown <= 0) {
+                goToNextPage();
+            }
+        }, 1000);
+
+        updateAutoPageUI();
+        console.log('[NS助手] 自动翻页已启动');
+    };
+
+    const stopAutoPage = () => {
+        autoPageRunning = false;
+        if (autoPageTimer) {
+            clearInterval(autoPageTimer);
+            autoPageTimer = null;
+        }
+        updateAutoPageUI();
+        console.log('[NS助手] 自动翻页已停止');
+    };
+
     // ==================== 侧边栏UI ====================
     let sidebarInstance = null;
 
@@ -531,6 +799,32 @@
         const sidebar = document.createElement('div');
         sidebar.className = 'ns-sidebar';
         sidebar.innerHTML = `
+            <div class="ns-card autopage">
+                <div class="ns-card-header">
+                    <span>📄 自动翻页</span>
+                    <span class="ns-card-toggle">−</span>
+                </div>
+                <div class="ns-card-body">
+                    <div class="ns-autopage-panel">
+                        <div class="ns-autopage-status">
+                            <span class="ns-autopage-timer">已停止</span>
+                            <div>
+                                <button class="ns-autopage-btn start">启动</button>
+                                <button class="ns-autopage-btn stop" style="display:none">停止</button>
+                                <button class="ns-autopage-btn next">下一页</button>
+                            </div>
+                        </div>
+                        <div class="ns-autopage-info">间隔: ${CONFIG.AUTO_PAGE_INTERVAL}秒</div>
+                    </div>
+                </div>
+            </div>
+            <div class="ns-card keyword">
+                <div class="ns-card-header">
+                    <span>🔍 关键字监控</span>
+                    <span class="ns-card-toggle">−</span>
+                </div>
+                <div class="ns-card-body"><div class="ns-empty ns-loading">监控中...</div></div>
+            </div>
             <div class="ns-card trade">
                 <div class="ns-card-header">
                     <span>💰 最新交易</span>
@@ -565,8 +859,53 @@
             });
         });
 
+        // 自动翻页按钮事件
+        sidebar.querySelector('.ns-autopage-btn.start')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            startAutoPage();
+        });
+        sidebar.querySelector('.ns-autopage-btn.stop')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            stopAutoPage();
+        });
+        sidebar.querySelector('.ns-autopage-btn.next')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            goToNextPage();
+        });
+
         sidebarInstance = sidebar;
         return sidebar;
+    };
+
+    // 渲染关键字监控卡片
+    const renderKeywordCard = (card, items) => {
+        const body = card.querySelector('.ns-card-body');
+        if (!items?.length) {
+            const keywords = [...CONFIG.KEYWORDS_EXACT, ...CONFIG.KEYWORDS_FUZZY].join(', ');
+            body.innerHTML = `<div class="ns-empty">暂无匹配<br><span style="font-size:9px;color:#bbb">监控: ${truncate(keywords, 20)}</span></div>`;
+            return;
+        }
+        body.innerHTML = items.slice(0, 8).map(item => `
+            <div class="ns-item ns-keyword-match ${item.visited ? 'visited' : ''}" data-post-id="${item.id}">
+                <a href="${escapeHtml(item.url)}" target="_blank" title="${escapeHtml(item.title)}">
+                    <div class="ns-item-row">
+                        <span class="ns-tag ${item.matchType}">${item.tag}</span>
+                        <span class="ns-title">${escapeHtml(truncate(item.title, 14))}</span>
+                        ${item.visited ? '<span class="ns-visited-mark">[已浏览]</span>' : ''}
+                    </div>
+                </a>
+            </div>
+        `).join('');
+
+        body.querySelectorAll('.ns-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const postId = el.getAttribute('data-post-id');
+                if (postId) {
+                    markAsVisited(postId);
+                    el.classList.add('visited');
+                }
+            });
+        });
     };
 
     const renderItemCard = (card, items, emptyText) => {
@@ -603,12 +942,14 @@
     };
 
     const loadSidebarData = async (sidebar) => {
-        const [trades, lotteries, scams] = await Promise.all([
+        const [trades, lotteries, scams, keywordMatches] = await Promise.all([
             fetchActiveTrades(),
             fetchActiveLotteries(),
-            fetchScamPosts()
+            fetchScamPosts(),
+            fetchKeywordMatches()
         ]);
 
+        renderKeywordCard(sidebar.querySelector('.ns-card.keyword'), keywordMatches);
         renderItemCard(sidebar.querySelector('.ns-card.trade'), trades, '暂无交易');
         renderItemCard(sidebar.querySelector('.ns-card.lottery'), lotteries, '暂无抽奖');
         renderItemCard(sidebar.querySelector('.ns-card.scam'), scams, '暂无曝光');
@@ -616,7 +957,7 @@
 
     // ==================== 初始化 ====================
     const init = async () => {
-        console.log('[NS助手] v2.2.0 初始化');
+        console.log('[NS助手] v2.3.0 初始化');
 
         // 记录当前浏览的帖子
         trackCurrentPost();
@@ -638,6 +979,9 @@
         setTimeout(checkWinStatus, 5000);
         setInterval(checkWinStatus, CONFIG.WIN_CHECK_INTERVAL);
 
+        // 启动关键字监控
+        startKeywordMonitor();
+
         // 列表页显示侧边栏
         const isListPage = location.pathname === '/' ||
             location.pathname.startsWith('/board') ||
@@ -647,6 +991,11 @@
             setTimeout(async () => {
                 const sidebar = createSidebar();
                 await loadSidebarData(sidebar);
+
+                // 如果配置了自动翻页，则启动
+                if (CONFIG.AUTO_PAGE_ENABLED) {
+                    startAutoPage();
+                }
             }, 500);
         }
     };
