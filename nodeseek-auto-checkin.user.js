@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         NodeSeek 增强助手
 // @namespace    https://github.com/weiruankeji2025/weiruan-nodeseek-Sign.in
-// @version      2.5.0
+// @version      2.6.0
 // @description  NodeSeek论坛增强：自动签到 + 交易监控 + 抽奖追踪 + 关键字监控 + 自动翻页
 // @author       weiruankeji2025
 // @match        https://www.nodeseek.com/*
@@ -129,7 +129,7 @@
         .ns-tag.fuzzy { background: #13c2c2; }
         .ns-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .ns-lottery-time { font-size: 8px; color: #fa8c16; padding-left: 20px; }
-        .ns-empty { text-align: center; padding: 8px; color: #999; font-size: 10px; }
+        .ns-empty { text-align: center; padding: 8px; color: #555; font-size: 10px; font-weight: 500; }
         .ns-loading { color: #1890ff; }
         .ns-panel { padding: 6px 8px; }
         .ns-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
@@ -168,13 +168,20 @@
             .ns-item a { color: #e0e0e0; }
             .ns-item.visited { background: #2d1a1a; }
             .ns-item.visited a { color: #ff6b6b; }
-            .ns-empty { color: #666; }
+            .ns-empty { color: #bbb; }
             .ns-input { background: #333; border-color: #444; color: #e0e0e0; }
             .ns-label { color: #aaa; }
             .ns-info { color: #666; }
             .post-list a.ns-visited-post, a.post-title.ns-visited-post { color: #ff6b6b !important; }
         }
-        @media (max-width: 1400px) { .ns-sidebar { display: none; } }
+        @media (max-width: 800px) { .ns-sidebar:not(.ns-force-show) { display: none; } }
+        .ns-zoom-controls { display: flex; align-items: center; gap: 3px; }
+        .ns-zoom-btn { width: 20px; height: 20px; font-size: 12px; padding: 0; line-height: 20px; background: #f0f0f0; border: 1px solid #ddd; border-radius: 3px; cursor: pointer; }
+        .ns-zoom-btn:hover { background: #e0e0e0; }
+        .ns-zoom-value { font-size: 9px; min-width: 32px; text-align: center; }
+        .ns-toggle-btn { position: fixed; right: 8px; top: 60px; z-index: 9999; padding: 4px 8px; font-size: 10px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border: none; border-radius: 4px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+        .ns-toggle-btn:hover { opacity: 0.9; }
+        .ns-toggle-btn.active { background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%); }
     `);
 
     // ==================== 设置管理 ====================
@@ -195,6 +202,24 @@
         return settings[key] !== undefined ? settings[key] : defaultValue;
     };
 
+    const getScale = () => getSetting('sidebarScale', 100);
+    const setScale = (scale) => {
+        scale = Math.max(50, Math.min(150, scale));
+        saveSetting('sidebarScale', scale);
+        applySidebarScale(scale);
+        return scale;
+    };
+    const applySidebarScale = (scale) => {
+        const sidebar = document.querySelector('.ns-sidebar');
+        if (sidebar) {
+            sidebar.style.transform = `scale(${scale / 100})`;
+            sidebar.style.transformOrigin = 'top right';
+        }
+    };
+
+    const getSidebarVisible = () => getSetting('sidebarVisible', true);
+    const setSidebarVisible = (visible) => saveSetting('sidebarVisible', visible);
+
     const getKeywords = () => {
         try {
             const saved = GM_getValue(CONFIG.KEYWORD_KEY);
@@ -213,7 +238,12 @@
     const notify = (title, text, onclick) => {
         GM_notification({ title, text, timeout: 5000, onclick });
     };
-    const extractPostId = (url) => url?.match(/\/post-(\d+)/)?.[1];
+    const extractPostId = (url) => {
+        if (!url || typeof url !== 'string') return null;
+        // 只匹配标准帖子链接格式：/post-数字.html 或 /post-数字
+        const match = url.match(/\/post-(\d+)(?:\.html|#|$|\?)/);
+        return match ? match[1] : null;
+    };
     const truncate = (str, len) => str && str.length > len ? str.trim().slice(0, len) + '…' : (str || '').trim();
     const escapeHtml = (str) => str ? str.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])) : '';
 
@@ -222,7 +252,19 @@
     const getVisitedPosts = () => {
         if (visitedCache) return visitedCache;
         try {
-            visitedCache = GM_getValue(CONFIG.VISITED_KEY) || {};
+            const stored = GM_getValue(CONFIG.VISITED_KEY);
+            // 验证数据格式，必须是对象且值为数字
+            if (stored && typeof stored === 'object' && !Array.isArray(stored)) {
+                visitedCache = {};
+                Object.keys(stored).forEach(id => {
+                    // 只保留有效的数字ID和时间戳
+                    if (/^\d+$/.test(id) && typeof stored[id] === 'number') {
+                        visitedCache[id] = stored[id];
+                    }
+                });
+            } else {
+                visitedCache = {};
+            }
         } catch {
             visitedCache = {};
         }
@@ -230,8 +272,12 @@
     };
 
     const markAsVisited = (postId) => {
-        if (!postId) return;
+        // 严格验证 postId 必须是纯数字
+        if (!postId || !/^\d+$/.test(String(postId))) return;
+        postId = String(postId);
         const visited = getVisitedPosts();
+        // 防止重复标记同一秒内的操作
+        if (visited[postId] && Date.now() - visited[postId] < 1000) return;
         visited[postId] = Date.now();
         // 只保留最近14天的记录（优化内存）
         const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
@@ -242,7 +288,17 @@
         GM_setValue(CONFIG.VISITED_KEY, visited);
     };
 
-    const isVisited = (postId) => !!getVisitedPosts()[postId];
+    const isVisited = (postId) => {
+        if (!postId || !/^\d+$/.test(String(postId))) return false;
+        return !!getVisitedPosts()[String(postId)];
+    };
+
+    // 清除无效的已浏览记录（用户可调用）
+    const clearVisitedCache = () => {
+        visitedCache = null;
+        GM_setValue(CONFIG.VISITED_KEY, {});
+        console.log('[NS助手] 已清除浏览记录缓存');
+    };
 
     // ==================== 全站已浏览帖子标红（优化性能） ====================
     let markTimeout = null;
@@ -264,12 +320,39 @@
     };
 
     // ==================== 签到功能 ====================
+    const getCSRFToken = () => {
+        // 方法1: 从 cookie 获取
+        const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+        if (match) return match[1];
+        // 方法2: 从 meta 标签获取
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta) return meta.getAttribute('content');
+        // 方法3: 从页面脚本中获取
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+            const text = script.textContent || '';
+            const tokenMatch = text.match(/csrfToken['":\s]+['"]([^'"]+)['"]/);
+            if (tokenMatch) return tokenMatch[1];
+        }
+        return null;
+    };
+
     const doCheckin = async () => {
         if (hasCheckedIn()) return;
         try {
+            // 获取 CSRF token
+            const csrfToken = getCSRFToken();
+            const headers = {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'X-Requested-With': 'XMLHttpRequest'
+            };
+            if (csrfToken) {
+                headers['X-CSRF-Token'] = csrfToken;
+            }
+
             const res = await fetch(CONFIG.API_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                headers,
                 credentials: 'include',
                 body: `random=${CONFIG.RANDOM_MODE}`
             });
@@ -277,8 +360,12 @@
             if (data.success) {
                 GM_setValue(CONFIG.STORAGE_KEY, getToday());
                 notify('签到成功', data.message || '获得鸡腿奖励！');
-            } else if (data.message?.includes('已完成') || data.message?.includes('已签到')) {
+                console.log('[NS助手] 签到成功:', data);
+            } else if (data.message?.includes('已完成') || data.message?.includes('已签到') || data.message?.includes('already')) {
                 GM_setValue(CONFIG.STORAGE_KEY, getToday());
+                console.log('[NS助手] 今日已签到');
+            } else {
+                console.warn('[NS助手] 签到返回:', data);
             }
         } catch (e) {
             console.error('[NS助手] 签到异常:', e);
@@ -489,12 +576,33 @@
     // ==================== 侧边栏UI ====================
     let sidebarInstance = null;
 
+    const createToggleButton = () => {
+        document.querySelector('.ns-toggle-btn')?.remove();
+        const btn = document.createElement('button');
+        btn.className = 'ns-toggle-btn';
+        btn.textContent = '📌 助手';
+        btn.title = '显示/隐藏助手面板';
+        btn.onclick = () => {
+            const sidebar = document.querySelector('.ns-sidebar');
+            if (sidebar) {
+                const isVisible = sidebar.style.display !== 'none';
+                sidebar.style.display = isVisible ? 'none' : 'flex';
+                sidebar.classList.toggle('ns-force-show', !isVisible);
+                btn.classList.toggle('active', !isVisible);
+                setSidebarVisible(!isVisible);
+            }
+        };
+        document.body.appendChild(btn);
+        return btn;
+    };
+
     const createSidebar = () => {
         document.querySelector('.ns-sidebar')?.remove();
         const sidebar = document.createElement('div');
         sidebar.className = 'ns-sidebar';
         const kw = getKeywords();
         const interval = getAutoPageInterval();
+        const scale = getScale();
 
         sidebar.innerHTML = `
             <div class="ns-card autopage">
@@ -516,19 +624,30 @@
                     </div>
                 </div>
             </div>
-            <div class="ns-card settings collapsed">
-                <div class="ns-card-header"><span>⚙️ 关键字设置</span><span class="ns-card-toggle">+</span></div>
+            <div class="ns-card settings">
+                <div class="ns-card-header"><span>⚙️ 面板设置</span><span class="ns-card-toggle">−</span></div>
                 <div class="ns-card-body">
                     <div class="ns-panel">
                         <div class="ns-group">
-                            <div class="ns-label"><span class="ns-tag exact">精准</span>匹配</div>
+                            <div class="ns-label">界面缩放</div>
+                            <div class="ns-row" style="margin-bottom:0">
+                                <div class="ns-zoom-controls">
+                                    <button class="ns-zoom-btn" id="ns-zoom-down">−</button>
+                                    <span class="ns-zoom-value" id="ns-zoom-value">${scale}%</span>
+                                    <button class="ns-zoom-btn" id="ns-zoom-up">+</button>
+                                </div>
+                                <button class="ns-btn blue" id="ns-zoom-reset" style="font-size:8px;padding:2px 4px">重置</button>
+                            </div>
+                        </div>
+                        <div class="ns-group">
+                            <div class="ns-label"><span class="ns-tag exact">精准</span>关键字</div>
                             <input type="text" class="ns-input" id="ns-kw-exact" value="${escapeHtml(kw.exact.join(', '))}" placeholder="VPS, CN2">
                         </div>
                         <div class="ns-group">
-                            <div class="ns-label"><span class="ns-tag fuzzy">模糊</span>匹配</div>
+                            <div class="ns-label"><span class="ns-tag fuzzy">模糊</span>关键字</div>
                             <input type="text" class="ns-input" id="ns-kw-fuzzy" value="${escapeHtml(kw.fuzzy.join(', '))}" placeholder="优惠, 免费">
                         </div>
-                        <button class="ns-btn green" id="ns-save-kw" style="width:100%;margin-top:4px">保存</button>
+                        <button class="ns-btn green" id="ns-save-kw" style="width:100%;margin-top:4px">保存关键字</button>
                     </div>
                 </div>
             </div>
@@ -563,6 +682,13 @@
         sidebar.querySelector('.ns-btn.next').onclick = e => { e.stopPropagation(); goToNextPage(); };
         document.getElementById('ns-interval').onchange = e => saveSetting('autoPageInterval', +e.target.value || 60);
 
+        // 缩放控制
+        const updateZoomDisplay = (val) => { document.getElementById('ns-zoom-value').textContent = val + '%'; };
+        document.getElementById('ns-zoom-down').onclick = e => { e.stopPropagation(); updateZoomDisplay(setScale(getScale() - 10)); };
+        document.getElementById('ns-zoom-up').onclick = e => { e.stopPropagation(); updateZoomDisplay(setScale(getScale() + 10)); };
+        document.getElementById('ns-zoom-reset').onclick = e => { e.stopPropagation(); updateZoomDisplay(setScale(100)); };
+        applySidebarScale(scale);
+
         // 关键字保存
         document.getElementById('ns-save-kw').onclick = async e => {
             e.stopPropagation();
@@ -571,7 +697,7 @@
             e.target.textContent = '已保存 ✓';
             const card = sidebar.querySelector('.ns-card.keyword');
             if (card) renderKeywordCard(card, await fetchKeywordMatches());
-            setTimeout(() => e.target.textContent = '保存', 1500);
+            setTimeout(() => e.target.textContent = '保存关键字', 1500);
         };
 
         sidebarInstance = sidebar;
@@ -637,7 +763,14 @@
         setInterval(checkWinStatus, CONFIG.WIN_CHECK_INTERVAL);
         startKeywordMonitor();
         setTimeout(async () => {
+            const toggleBtn = createToggleButton();
             const sidebar = createSidebar();
+            // 恢复显示状态
+            const visible = getSidebarVisible();
+            if (!visible) {
+                sidebar.style.display = 'none';
+                toggleBtn.classList.add('active');
+            }
             await loadSidebarData(sidebar);
             if (CONFIG.AUTO_PAGE_ENABLED) startAutoPage();
         }, 500);
